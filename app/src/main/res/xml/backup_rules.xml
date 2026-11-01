@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 and older Auto Backup. Keeps the install id (data/prefs/DeviceIdentity.kt) and the push state
+     (data/push/PushRegistrar.kt: FCM token, permission-asked flag) on this device only. -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="fiberirc_device_identity.xml" />
+    <exclude domain="sharedpref" path="fiberirc_push.xml" />
+</full-backup-content>

@@ -1,0 +1,12 @@
+local.properties
+.gradle/
+build/
+app/build/
+app/.cxx/
+.idea/
+*.iml
+.DS_Store
+.kotlin/
+.java_home_note
+__pycache__/
+*.pyc

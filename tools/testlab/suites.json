@@ -1,0 +1,7 @@
+{
+  "android": {
+    "smoke": [
+      "FiberIrcUiTest#coldLaunchResumes", "FiberIrcUiTest#bufferDeepLinkWaitsForTheSession"
+    ]
+  }
+}

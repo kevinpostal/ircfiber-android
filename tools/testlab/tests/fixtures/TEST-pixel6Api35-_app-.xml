@@ -1,0 +1,23 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuite name="com.kevinpostal.fiberirc.FiberIrcUiTest" tests="4" failures="1" errors="1" skipped="1" time="50.8" timestamp="2026-10-27T20:00:00" hostname="localhost">
+  <properties>
+    <property name="device" value="pixel6Api35" />
+    <property name="flavor" value="" />
+    <property name="project" value=":app" />
+  </properties>
+  <testcase name="quickSwitcherFiltersBuffers" classname="com.kevinpostal.fiberirc.FiberIrcUiTest" time="20.1" />
+  <testcase name="offlineShowsReconnect" classname="com.kevinpostal.fiberirc.FiberIrcUiTest" time="30.2">
+    <failure>java.lang.AssertionError: Failed to assert the following: (TestTag = 'reconnect')
+Reason: Expected exactly '1' node but could not find any node that satisfies: (TestTag = 'reconnect')
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchSemanticsNode(SemanticsNodeInteraction.kt:145)
+	at com.kevinpostal.fiberirc.FiberIrcUiTest.offlineShowsReconnect(FiberIrcUiTest.kt:612)
+	at java.lang.reflect.Method.invoke(Native Method)
+</failure>
+  </testcase>
+  <testcase name="largeFontShowsEveryTextWhole" classname="com.kevinpostal.fiberirc.FiberIrcUiTest" time="0.0">
+    <skipped />
+  </testcase>
+  <testcase name="webLinkOpensBuffer" classname="com.kevinpostal.fiberirc.AppRouterUiTest" time="0.5">
+    <error message="Process crashed.">Test failed to run to completion. Reason: 'Instrumentation run failed due to Process crashed.'. Check device logcat for details</error>
+  </testcase>
+</testsuite>

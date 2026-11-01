@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider (${applicationId}.fileprovider) roots: files the app shares from its cache dir
+     (diagnostics export, log export, camera captures). -->
+<paths>
+    <cache-path name="cache" path="." />
+</paths>

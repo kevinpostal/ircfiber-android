@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Sharing shortcuts: the dynamic conversation shortcuts ConversationShortcuts publishes (category below) appear in
+     the system share sheet's Direct Share row and open ShareTargetActivity with that shortcut's id
+     ("<networkId>:<buffer lower-cased>") as EXTRA_SHORTCUT_ID. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <share-target android:targetClass="com.kevinpostal.fiberirc.ui.share.ShareTargetActivity">
+        <data android:mimeType="text/plain" />
+        <data android:mimeType="image/*" />
+        <data android:mimeType="video/*" />
+        <data android:mimeType="*/*" />
+        <category android:name="com.kevinpostal.fiberirc.category.CONVERSATION" />
+    </share-target>
+</shortcuts>

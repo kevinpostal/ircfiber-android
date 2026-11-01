@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+. The install id (data/prefs/DeviceIdentity.kt) must never reach another phone through a cloud backup
+     or a device-to-device transfer: that phone would share this one's settings profile and bouncer cursor. Neither
+     may the push state (data/push/PushRegistrar.kt): its FCM token belongs to this install, and a restored
+     "already asked" flag would keep the new phone from ever asking for notification permission. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="fiberirc_device_identity.xml" />
+        <exclude domain="sharedpref" path="fiberirc_push.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="fiberirc_device_identity.xml" />
+        <exclude domain="sharedpref" path="fiberirc_push.xml" />
+    </device-transfer>
+</data-extraction-rules>
