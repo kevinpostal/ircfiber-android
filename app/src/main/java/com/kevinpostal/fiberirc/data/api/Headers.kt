@@ -7,12 +7,15 @@ import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
+import java.time.ZoneId
 import java.util.concurrent.TimeUnit
 
 const val DEVICE_HEADER = "X-IRCFiber-Device"
 const val DEVICE_MODEL_HEADER = "X-IRCFiber-Device-Model"
 const val DEVICE_OS_HEADER = "X-IRCFiber-Device-OS"
 const val DEVICE_APP_VERSION_HEADER = "X-IRCFiber-Device-App-Version"
+/** This install's IANA time zone (quiet hours in "This device's timezone" mode); read per request, it can change. */
+const val DEVICE_TZ_HEADER = "X-IRCFiber-Device-TZ"
 const val USER_AGENT = "FiberIRC Android"
 
 /**
@@ -36,6 +39,7 @@ fun fiberIrcHeaderInterceptor(
             .header(DEVICE_MODEL_HEADER, model)
             .header(DEVICE_OS_HEADER, os)
             .header(DEVICE_APP_VERSION_HEADER, appVersion)
+            .header(DEVICE_TZ_HEADER, ZoneId.systemDefault().id)
         if (chain.request().method != "GET") r.header("Origin", origin)
         chain.proceed(r.build())
     }

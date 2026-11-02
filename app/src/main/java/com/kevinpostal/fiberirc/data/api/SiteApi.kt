@@ -41,6 +41,14 @@ sealed class SiteApiError(message: String) : Exception(message) {
     data object RateLimited : SiteApiError("Too many reports in the last hour — try again later")
     /** Server-provided explanation (`{"error": "…"}`). */
     data class Message(val text: String) : SiteApiError(text)
+    /**
+     * 409 with a JSON [body] — the notification policy's `rev_conflict` `{"error","code","current"}`: someone
+     * else changed it first; [body]'s `current` is the stored state to retry on.
+     */
+    data class Conflict(val body: JsonElement) : SiteApiError(
+        ((body as? JsonObject)?.get("error") as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
+            ?: "Changed elsewhere — try again",
+    )
 
     companion object {
         /** `{"error": "…"}` bodies become [Message] so the user sees the server's explanation (`serverError`). */
@@ -54,9 +62,13 @@ sealed class SiteApiError(message: String) : Exception(message) {
 
         /**
          * Non-2xx answers of the account-settings calls (`failure`). A 401 is a lost session, unless the server
-         * explains it (a wrong current password); requireAuth's own body is the generic "Unauthorized".
+         * explains it (a wrong current password); requireAuth's own body is the generic "Unauthorized". A 409 with
+         * a JSON object body is a [Conflict].
          */
         fun failure(code: Int, body: String): SiteApiError {
+            if (code == 409) {
+                (runCatching { SiteJson.parseToJsonElement(body) }.getOrNull() as? JsonObject)?.let { return Conflict(it) }
+            }
             val error = serverError(code, body)
             if (code != 401) return error
             if (error is Message && error.text != "Unauthorized") return error
@@ -202,21 +214,24 @@ class SiteApi(private val client: OkHttpClient, val baseUrl: String) {
         request("DELETE", segments, emptyMap(), null).map { }
 
     /**
-     * Any method (`PATCH` included) on `segments`: 2xx → the JSON body (JsonNull when empty), else
-     * [SiteApiError.failure]; an unparsable 2xx body is [SiteApiError.Malformed].
+     * Any method (`PATCH` included) on `segments`, with extra request [headers] (`If-Match`): 2xx → the JSON body
+     * (JsonNull when empty), else [SiteApiError.failure]; an unparsable 2xx body is [SiteApiError.Malformed].
      */
     suspend fun request(
         method: String,
         segments: List<String>,
         query: Map<String, String> = emptyMap(),
         body: JsonElement? = null,
+        headers: Map<String, String> = emptyMap(),
     ): Result<JsonElement> = attempt {
         val rb = when {
             body != null -> body.toString().toRequestBody(JSON)
             method == "GET" || method == "DELETE" -> null
             else -> ByteArray(0).toRequestBody(null)
         }
-        val a = send(Request.Builder().url(url(segments, query)).method(method, rb).build())
+        val builder = Request.Builder().url(url(segments, query)).method(method, rb)
+        for ((name, value) in headers) builder.header(name, value)
+        val a = send(builder.build())
         if (a.code !in 200 until 300) throw SiteApiError.failure(a.code, a.body)
         if (a.body.isBlank()) JsonNull else runCatching { SiteJson.parseToJsonElement(a.body) }
             .getOrElse { throw SiteApiError.Malformed }

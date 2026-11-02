@@ -179,7 +179,7 @@ class ShellController(
      */
     private fun wire(c: IrcClient) {
         c.isHighlight = { line: IrcLine, nick: String ->
-            line.mentions(nick) || HighlightMatcher.matches(line, stores.accountSettings.highlightWords.value, nick)
+            line.mentions(nick) || HighlightMatcher.matches(line, stores.accountSettings.highlightWords.value, nick, stores.accountSettings.highlightOptions.value)
         }
         c.isMuted = { b -> effective(BufferPrefsStore.Key.MUTE, c, b) }
         c.autoMarksRead = { b -> effective(BufferPrefsStore.Key.MARK_AS_READ, c, b) }
@@ -767,7 +767,15 @@ class ShellController(
             val me = api.me().getOrNull() ?: return@launch
             if (tornDown) return@launch
             stores.reloadFromMe(me)
+            migrateLegacyChatScale()
             if (syncing) syncNetworks(me)
+        }
+    }
+
+    /** Moves the pre-sync local Font Size onto this device's display prefs, once. A failed save is dropped. */
+    private suspend fun migrateLegacyChatScale() {
+        deviceSettings.takeLegacyChatScalePct()?.let { pct ->
+            runCatching { stores.accountSettings.updateDisplay { it.copy(chatScalePct = pct) } }
         }
     }
 

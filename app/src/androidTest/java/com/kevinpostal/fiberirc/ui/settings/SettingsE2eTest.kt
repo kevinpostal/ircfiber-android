@@ -1,6 +1,11 @@
 package com.kevinpostal.fiberirc.ui.settings
 
 import android.app.Application
+import android.content.Context
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
@@ -21,9 +26,14 @@ import androidx.compose.ui.test.swipeLeft
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.kevinpostal.fiberirc.data.api.DEVICE_TZ_HEADER
 import com.kevinpostal.fiberirc.data.api.Me
+import com.kevinpostal.fiberirc.data.api.SiteJson
 import com.kevinpostal.fiberirc.data.irc.ConnectionSettings
+import com.kevinpostal.fiberirc.data.prefs.ACCOUNT_PREFS_FILE
+import com.kevinpostal.fiberirc.data.prefs.NotificationPolicyStore
 import com.kevinpostal.fiberirc.support.FakeSiteServer
+import com.kevinpostal.fiberirc.support.fakePolicyViewJson
 import com.kevinpostal.fiberirc.support.TestSession
 import com.kevinpostal.fiberirc.ui.theme.FiberIrcTheme
 import kotlinx.serialization.json.Json
@@ -93,6 +103,7 @@ class SettingsE2eTest {
                     deviceSettings = session.deps.deviceSettings,
                     displaySettings = session.deps.displaySettings,
                     notificationPrefs = session.deps.notificationPrefs,
+                    notificationPolicy = session.deps.notificationPolicy,
                     blockList = session.deps.blockList,
                     sessionActions = session.sessionActions,
                     onClose = { closed = true },
@@ -310,5 +321,62 @@ class SettingsE2eTest {
         assertEquals("Your account was deleted.", session.loggedOutNotice)
         assertEquals(2, requestsTo("DELETE", "/api/me").size)
         assertEquals(1, requestsTo("GET", "/logout").size)
+    }
+
+    /**
+     * A Notification Policy v2 server: Notifications opens the v2 screen (not the v1 Mute All screen). Picking a
+     * preset PATCHes `{"applyPreset"}` with `If-Match`; a 409 adopts the server's `current` and retries once at its
+     * rev. Turning this phone's DM push off PATCHes `clients/self` with only that cell, and the row says it's changed.
+     */
+    @Test
+    fun notificationsV2PresetRetriesConflictAndThisPhoneOverrides() {
+        app.getSharedPreferences(ACCOUNT_PREFS_FILE, Context.MODE_PRIVATE).edit().remove(NotificationPolicyStore.KEY_VIEW).commit()
+        val meJson = """{"id":"u1","username":"tester","email":"tester@example.com","muteAll":false,"notificationSound":true,
+            "highlightWords":["outage"],"notificationPolicy":${fakePolicyViewJson(rev = 3)}}"""
+        server.on("GET", "/api/me", body = meJson)
+        var policyWrites = 0
+        server.defaultsNotificationPolicy(fakePolicyViewJson(rev = 3)) { req ->
+            if (req.path == "/api/me/notification-policy") {
+                policyWrites++
+                if (policyWrites == 1) {
+                    MockResponse().setResponseCode(409)
+                        .setBody("""{"error":"changed","code":"rev_conflict","current":${fakePolicyViewJson(rev = 4)}}""")
+                } else {
+                    MockResponse().setBody(fakePolicyViewJson(rev = 5, preset = "everything"))
+                }
+            } else {
+                MockResponse().setBody(
+                    fakePolicyViewJson(rev = 6, preset = "everything")
+                        .replace("\"clients\":{}", "\"clients\":{\"self01\":{\"cells\":{\"dm.mobile\":false}}}"),
+                )
+            }
+        }
+        val session = launch(SiteJson.decodeFromString(Me.serializer(), meJson))
+        val policy = session.deps.notificationPolicy
+        try {
+            compose.onNodeWithText("Notifications").performClick()
+            waitForText("NOTIFY ME ABOUT")
+            compose.onNodeWithTag("notifications.preset.focused").assert(hasContentDescription("Selected"))
+
+            compose.onNodeWithTag("notifications.preset.everything").performClick()
+            val patches = waitForRequests("PATCH", "/api/me/notification-policy", count = 2)
+            assertEquals("\"np-3\"", patches[0].getHeader("If-Match"))
+            assertEquals("\"np-4\"", patches[1].getHeader("If-Match"))
+            assertEquals(json("""{"applyPreset":"everything"}"""), patches[1].json())
+            compose.waitUntil(timeoutMillis = 5_000) { policy.view.value?.rev == 5L }
+            compose.onNodeWithTag("notifications.preset.everything").assert(hasContentDescription("Selected"))
+
+            compose.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(hasTestTag("notifications.class.dm.mobile"))
+            compose.onNodeWithTag("notifications.class.dm.mobile").assertIsOn().performClick()
+            val client = waitForRequests("PATCH", "/api/me/notification-policy/clients/self").single()
+            assertEquals("\"np-5\"", client.getHeader("If-Match"))
+            assertEquals(json("""{"cells":{"dm.mobile":false}}"""), client.json())
+            assertEquals(java.time.ZoneId.systemDefault().id, client.getHeader(DEVICE_TZ_HEADER))
+            compose.waitUntil(timeoutMillis = 5_000) { policy.view.value?.rev == 6L }
+            compose.onNodeWithTag("notifications.class.dm.mobile").assertIsOff()
+            compose.onNodeWithText("Changed on this device").assertExists()
+        } finally {
+            policy.reset()
+        }
     }
 }

@@ -60,6 +60,7 @@ import com.kevinpostal.fiberirc.data.irc.IrcMember
 import com.kevinpostal.fiberirc.data.irc.mentions
 import com.kevinpostal.fiberirc.data.prefs.DeviceSettings
 import com.kevinpostal.fiberirc.data.prefs.DisplayPrefs
+import com.kevinpostal.fiberirc.data.prefs.HighlightOptions
 import com.kevinpostal.fiberirc.ui.theme.FiberIrcColors
 import com.kevinpostal.fiberirc.ui.theme.Grid
 import com.kevinpostal.fiberirc.ui.theme.LocalFiberIrcColors
@@ -122,6 +123,7 @@ class ChatRowStyle(
     val display: DisplayPrefs,
     val device: DeviceSettings,
     val highlightWords: List<String>,
+    val highlightOptions: HighlightOptions,
     val ownNick: String,
     members: List<IrcMember>,
     /** Width of the time column ([MessageTime.columnWidth] of [timeStyle]). */
@@ -150,9 +152,9 @@ class ChatRowStyle(
         avatarSize = if (device.nicknamesOnSeparateLine) Grid.leadingColumn else 16.dp,
     )
 
-    /** Chat text (Settings → Display → Monospace font) at the device's Font Size. */
-    val regular: TextStyle = chatTextStyle(display.monospaceFont, bold = false, device.chatFontScale)
-    val bold: TextStyle = chatTextStyle(display.monospaceFont, bold = true, device.chatFontScale)
+    /** Chat text (Settings → Display → Monospace font) at this device's synced Font Size. */
+    val regular: TextStyle = chatTextStyle(display.monospaceFont, bold = false, display.chatFontScale)
+    val bold: TextStyle = chatTextStyle(display.monospaceFont, bold = true, display.chatFontScale)
 
     fun nickColor(nick: String): Color = if (device.colouriseNicknames) nickColor(nick, colors.dark) else colors.heading
 
@@ -182,17 +184,18 @@ fun rememberChatRowStyle(
     display: DisplayPrefs,
     device: DeviceSettings,
     highlightWords: List<String>,
+    highlightOptions: HighlightOptions,
     ownNick: String,
     members: List<IrcMember>,
     colors: FiberIrcColors = LocalFiberIrcColors.current,
 ): ChatRowStyle {
     val measurer = rememberTextMeasurer()
     val density = LocalDensity.current
-    return remember(display, device, highlightWords, ownNick, members, colors, density) {
+    return remember(display, device, highlightWords, highlightOptions, ownNick, members, colors, density) {
         val timeWidth = MessageTime.columnWidth(
             display.timestampFormat, device.showSeconds, ChatRowStyle.timeStyle, measurer, density,
         )
-        ChatRowStyle(colors, display, device, highlightWords, ownNick, members, timeWidth)
+        ChatRowStyle(colors, display, device, highlightWords, highlightOptions, ownNick, members, timeWidth)
     }
 }
 
@@ -224,7 +227,7 @@ fun rowBand(line: IrcLine, style: ChatRowStyle): RowBand {
     val sender = line.sender ?: ""
     val chat = line.kind == IrcLineKind.MESSAGE || line.kind == IrcLineKind.ACTION || line.kind == IrcLineKind.NOTICE
     val own = chat && sender.isNotEmpty() && sender.equals(style.ownNick, ignoreCase = true)
-    val mentioned = line.mentions(style.ownNick) || HighlightMatcher.matches(line, style.highlightWords, style.ownNick)
+    val mentioned = line.mentions(style.ownNick) || HighlightMatcher.matches(line, style.highlightWords, style.ownNick, style.highlightOptions)
     val background = when {
         mentioned -> c.rowHighlight
         line.kind == IrcLineKind.NOTICE -> c.noticeRow

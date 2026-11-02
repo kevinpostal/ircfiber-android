@@ -187,6 +187,7 @@ private fun RouteScreen(
             deviceSettings = deps.deviceSettings,
             displaySettings = deps.displaySettings,
             notificationPrefs = deps.notificationPrefs,
+            notificationPolicy = deps.notificationPolicy,
             blockList = deps.blockList,
             sessionActions = sessionActions,
             onClose = pop,

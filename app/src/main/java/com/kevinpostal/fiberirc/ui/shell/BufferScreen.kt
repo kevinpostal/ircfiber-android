@@ -241,6 +241,7 @@ private fun ChatPane(
     val display by stores.accountSettings.display.collectAsState()
     val device by deviceSettings.settings.collectAsState()
     val highlightWords by stores.accountSettings.highlightWords.collectAsState()
+    val highlightOptions by stores.accountSettings.highlightOptions.collectAsState()
     val bufferPrefs by stores.bufferPrefs.values.collectAsState()
     val blocked by stores.blockList.masks.collectAsState()
     var expanded by remember(buffer) { mutableStateOf<Set<String>>(emptySet()) }
@@ -273,6 +274,7 @@ private fun ChatPane(
         display = display,
         device = device,
         highlightWords = highlightWords,
+        highlightOptions = highlightOptions,
         ownNick = client.nick,
         members = buffer.members,
     )

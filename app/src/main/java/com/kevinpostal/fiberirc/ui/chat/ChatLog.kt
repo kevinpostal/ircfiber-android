@@ -138,7 +138,7 @@ fun ChatLog(
                 else -> continue
             }
             if (!countsAsNew(line, style.ownNick)) continue
-            if (line.mentions(style.ownNick) || HighlightMatcher.matches(line, style.highlightWords, style.ownNick)) {
+            if (line.mentions(style.ownNick) || HighlightMatcher.matches(line, style.highlightWords, style.ownNick, style.highlightOptions)) {
                 newMentionsWhileScrolledUp += 1
             } else {
                 newWhileScrolledUp += 1

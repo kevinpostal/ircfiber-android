@@ -17,6 +17,7 @@ import com.kevinpostal.fiberirc.data.prefs.DeviceIdentity
 import com.kevinpostal.fiberirc.data.prefs.DeviceSettingsStore
 import com.kevinpostal.fiberirc.data.prefs.DisplaySettingsStore
 import com.kevinpostal.fiberirc.data.prefs.NetworkLayoutStore
+import com.kevinpostal.fiberirc.data.prefs.NotificationPolicyStore
 import com.kevinpostal.fiberirc.data.prefs.NotificationPrefsStore
 import com.kevinpostal.fiberirc.data.prefs.PinListStore
 import com.kevinpostal.fiberirc.data.prefs.ShareTargetsStore
@@ -45,6 +46,7 @@ class Deps(private val app: Application, val apiBaseUrl: String = BuildConfig.AP
     val deviceSettings = DeviceSettingsStore(app)
     val displaySettings = DisplaySettingsStore(app)
     val notificationPrefs = NotificationPrefsStore(app, api)
+    val notificationPolicy = NotificationPolicyStore(app, api)
     val pinList = PinListStore(app, api)
     val archiveList = ArchiveListStore(app, api)
     val blockList = BlockListStore(api)
@@ -54,6 +56,7 @@ class Deps(private val app: Application, val apiBaseUrl: String = BuildConfig.AP
     val accountStores = AccountStores(
         accountSettings = accountSettings,
         notificationPrefs = notificationPrefs,
+        notificationPolicy = notificationPolicy,
         pinList = pinList,
         archiveList = archiveList,
         blockList = blockList,

@@ -28,8 +28,12 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -58,6 +62,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.kevinpostal.fiberirc.ui.theme.Grid
 import com.kevinpostal.fiberirc.ui.theme.LocalFiberIrcColors
 
@@ -254,6 +259,46 @@ fun SettingsSwitchRow(title: String, checked: Boolean, enabled: Boolean = true, 
             enabled = enabled,
             colors = SwitchDefaults.colors(checkedTrackColor = c.accent),
         )
+    }
+}
+
+/** A row whose value opens a menu of [options]; picking another one calls [choose] (`popUp`). */
+@Composable
+internal fun <T> PopUpRow(
+    title: String,
+    options: List<T>,
+    selected: T,
+    label: (T) -> String,
+    subtitle: (T) -> String? = { null },
+    modifier: Modifier = Modifier,
+    choose: (T) -> Unit,
+) {
+    val c = LocalFiberIrcColors.current
+    var open by remember { mutableStateOf(false) }
+    SettingsRow(title, modifier = modifier, onClick = { open = true }) {
+        Box {
+            TextButton(onClick = { open = true }) {
+                Text(label(selected), color = c.link)
+                Icon(Icons.Filled.ArrowDropDown, contentDescription = null, tint = c.link)
+            }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                for (option in options) {
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                Text(label(option))
+                                subtitle(option)?.let { Text(it, color = c.textSecondary, fontSize = 12.sp) }
+                            }
+                        },
+                        trailingIcon = if (option == selected) ({ Icon(Icons.Filled.Check, contentDescription = "Selected") }) else null,
+                        onClick = {
+                            open = false
+                            if (option != selected) choose(option)
+                        },
+                    )
+                }
+            }
+        }
     }
 }
 

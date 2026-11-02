@@ -1,6 +1,7 @@
 package com.kevinpostal.fiberirc.data.api
 
 import kotlinx.serialization.KSerializer
+import kotlinx.serialization.descriptors.nullable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.descriptors.SerialDescriptor
@@ -47,6 +48,10 @@ data class Me(
     /** This install's display prefs (its `X-IRCFiber-Device` profile); decoded by `DisplayPrefs.fromJson`. */
     val displayPrefs: JsonObject? = null,
     val highlightWords: List<String>? = null,
+    /** Notification Policy v2; null from a server without it (old servers keep the v1 keys above). Lenient: a
+     * malformed policy decodes as null rather than failing `/api/me`. */
+    @Serializable(with = LenientPolicyViewSerializer::class)
+    val notificationPolicy: NotificationPolicyView? = null,
 )
 
 /** `prefs.bufferPrefs`: a value that isn't a boolean, or an entry that isn't an object, decodes as absent. */
@@ -158,4 +163,190 @@ enum class IrcAccountStatus {
     @SerialName("none") NONE;
 
     val wire: String get() = name.lowercase()
+}
+
+// MARK: Notification Policy v2 (`NotificationPolicyView`: GET /api/me/notification-policy, `/api/me`
+// `notificationPolicy`, every policy write's answer). Every field defaults so [SiteJson] decodes whatever the server
+// adds or drops later.
+
+/** Notification classes in contract order (wire names). */
+val NOTIFY_CLASSES = listOf("dm", "mention", "all", "invite", "notice", "wallops")
+
+/** The client key of every browser (`clients["web"]`). */
+const val POLICY_CLIENT_WEB = "web"
+
+/** One class's delivery cells (`matrix.<cls>`); presets carry no `email`. */
+@Serializable
+data class PolicyCells(
+    val desktop: Boolean = false,
+    val sound: Boolean = false,
+    val mobile: Boolean = false,
+    val email: Boolean = false,
+) {
+    fun get(transport: String): Boolean? = when (transport) {
+        "desktop" -> desktop
+        "sound" -> sound
+        "mobile" -> mobile
+        "email" -> email
+        else -> null
+    }
+}
+
+/** A quiet-hours window: days 0 = Monday … 6 = Sunday, `HH:MM` start and end (end may be `24:00`). */
+@Serializable
+data class PolicyQuietWindow(val days: List<Int> = emptyList(), val start: String = "", val end: String = "")
+
+@Serializable
+data class PolicyBreakthrough(
+    val vip: List<String> = emptyList(),
+    val repeatSec: Int = 180,
+    val urgentWords: Boolean = true,
+)
+
+@Serializable
+data class PolicyQuiet(
+    val enabled: Boolean = false,
+    val tz: String = "",
+    /** `account` or `device` (an app install's own timezone, sent as `X-IRCFiber-Device-TZ`). */
+    val tzMode: String = "account",
+    val windows: List<PolicyQuietWindow> = emptyList(),
+    val breakthrough: PolicyBreakthrough = PolicyBreakthrough(),
+    val summary: Boolean = true,
+)
+
+@Serializable
+data class PolicyHighlightWord(val w: String = "", val urgent: Boolean = false)
+
+@Serializable
+data class PolicyHighlight(
+    val words: List<PolicyHighlightWord> = emptyList(),
+    val wholeWord: Boolean = true,
+    val caseSensitive: Boolean = false,
+)
+
+@Serializable
+data class PolicyPresentation(val preview: String = "full", val coalesceSec: Int = 30, val autoDismiss: Boolean = true)
+
+@Serializable
+data class PolicyEmail(val mode: String = "delay15", val dailyHour: Int = 8)
+
+/** A client's sparse overrides: `"<cls>.<transport>"` cells and an optional own snooze (`0` overrides the account's). */
+@Serializable
+data class PolicyClientOverride(val cells: Map<String, Boolean> = emptyMap(), val snoozeUntil: Long? = null)
+
+/** The stored policy; `clients` keys are `"web"` or an install's `sessionRef`. */
+@Serializable
+data class NotificationPolicy(
+    val v: Int = 2,
+    val rev: Long = 1,
+    val matrix: Map<String, PolicyCells> = emptyMap(),
+    val snoozeUntil: Long = 0,
+    val quiet: PolicyQuiet = PolicyQuiet(),
+    val highlight: PolicyHighlight = PolicyHighlight(),
+    val presentation: PolicyPresentation = PolicyPresentation(),
+    val email: PolicyEmail = PolicyEmail(),
+    /** Network id → `all` | `muted`. */
+    val networks: Map<String, String> = emptyMap(),
+    val clients: Map<String, PolicyClientOverride> = emptyMap(),
+    val migratedAt: Long = 0,
+    val bannerDismissed: Boolean = false,
+) {
+    /** The account cell (`matrix[cls][transport]`), false when absent. */
+    fun accountCell(cls: String, transport: String): Boolean = matrix[cls]?.get(transport) ?: false
+
+    /** Contract `resolveCell`: the client's override when it has one, else the account cell. */
+    fun resolveCell(target: String, cls: String, transport: String): Boolean =
+        clients[target]?.cells?.get("$cls.$transport") ?: accountCell(cls, transport)
+
+    /** Whether [target] overrides `cls.transport`. */
+    fun overrides(target: String, cls: String, transport: String): Boolean =
+        clients[target]?.cells?.containsKey("$cls.$transport") == true
+
+    /** Contract `snoozeOf`: the client's own snooze when set (0 included), else the account's. */
+    fun snoozeOf(target: String): Long = clients[target]?.snoozeUntil ?: snoozeUntil
+}
+
+/** `-1` (until resumed) or a future instant snoozes; `0` and past instants don't. */
+fun snoozeActive(snoozeUntil: Long, nowMs: Long): Boolean = snoozeUntil == -1L || snoozeUntil > nowMs
+
+/** `clientsMeta[]`: `web` (every browser), then each app install. */
+@Serializable
+data class PolicyClientMeta(
+    val ref: String = "",
+    /** `web`, `ios` or `android`. */
+    val kind: String = "",
+    val label: String = "",
+    val appVersion: String = "",
+    val lastSeenAt: Long = 0,
+    val push: Boolean = false,
+    val tz: String = "",
+)
+
+/** The `web` target's state now (ms; 0 = none). */
+@Serializable
+data class PolicyStatus(
+    val snoozedUntil: Long = 0,
+    val quietNow: Boolean = false,
+    val quietEndsAt: Long = 0,
+    val nextQuietStartsAt: Long = 0,
+)
+
+@Serializable
+data class PolicyWebPushCapability(val publicKey: String = "")
+
+@Serializable
+data class PolicyEmailCapability(val available: Boolean = false, val address: String = "")
+
+@Serializable
+data class PolicyCapabilities(
+    val webPush: PolicyWebPushCapability? = null,
+    val email: PolicyEmailCapability = PolicyEmailCapability(),
+)
+
+/** This install's resolved column (`mobile`) and sound per class. */
+@Serializable
+data class PolicyEffectiveCells(val mobile: Boolean = false, val sound: Boolean = false)
+
+/** Only with `X-IRCFiber-Device` for a known install: what the server resolves for it. */
+@Serializable
+data class PolicyEffective(
+    val matrix: Map<String, PolicyEffectiveCells> = emptyMap(),
+    val snoozeUntil: Long = 0,
+    val quietNow: Boolean = false,
+    val quietEndsAt: Long = 0,
+)
+
+@Serializable
+data class NotificationPolicyView(
+    val policy: NotificationPolicy = NotificationPolicy(),
+    /** The If-Match token (`"np-<rev>"`). */
+    val rev: Long = 1,
+    val prefVersion: Long = 0,
+    /** `everything`, `focused`, `quiet` or `custom` (derived from the account matrix). */
+    val preset: String = "custom",
+    /** Preset → class → desktop/sound/mobile. */
+    val presets: Map<String, Map<String, PolicyCells>> = emptyMap(),
+    /** Template → windows. */
+    val quietTemplates: Map<String, List<PolicyQuietWindow>> = emptyMap(),
+    val clientsMeta: List<PolicyClientMeta> = emptyList(),
+    val status: PolicyStatus = PolicyStatus(),
+    val capabilities: PolicyCapabilities = PolicyCapabilities(),
+    /** This install's client key; null when the server doesn't know its profile yet. */
+    val selfRef: String? = null,
+    val effective: PolicyEffective? = null,
+)
+
+/** `notificationPolicy` that decodes as null instead of failing its parent when it doesn't fit the model. */
+object LenientPolicyViewSerializer : KSerializer<NotificationPolicyView?> {
+    override val descriptor: SerialDescriptor = JsonElement.serializer().descriptor.nullable
+
+    override fun deserialize(decoder: Decoder): NotificationPolicyView? {
+        val element = (decoder as? JsonDecoder)?.decodeJsonElement() as? JsonObject ?: return null
+        return runCatching { SiteJson.decodeFromJsonElement(NotificationPolicyView.serializer(), element) }.getOrNull()
+    }
+
+    override fun serialize(encoder: Encoder, value: NotificationPolicyView?) {
+        if (value == null) encoder.encodeNull()
+        else (encoder as JsonEncoder).encodeJsonElement(SiteJson.encodeToJsonElement(NotificationPolicyView.serializer(), value))
+    }
 }

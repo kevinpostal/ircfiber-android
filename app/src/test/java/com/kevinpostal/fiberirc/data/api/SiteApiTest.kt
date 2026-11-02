@@ -116,4 +116,89 @@ class SiteApiTest {
         server.enqueue(MockResponse().setBody("""{"id":"1","username":"kev","email":"e"}"""))
         assertEquals("kev", api.appSession("good").getOrThrow().username)
     }
+
+    @Test
+    fun meDecodesNotificationPolicy() = runTest {
+        server.enqueue(
+            MockResponse().setBody(
+                """{"id":"u1","username":"kev","muteAll":false,"notificationSound":true,"highlightWords":["outage","deploy"],
+                "notificationPolicy":${policyViewJson()}}""",
+            ),
+        )
+        val me = api.me().getOrThrow()
+        val view = me.notificationPolicy!!
+        assertEquals(12L, view.rev)
+        assertEquals("focused", view.preset)
+        assertEquals("a1b2c3", view.selfRef)
+        assertEquals(listOf(PolicyHighlightWord("outage", true), PolicyHighlightWord("deploy", false)), view.policy.highlight.words)
+        assertEquals(mapOf("dm.sound" to false), view.policy.clients["a1b2c3"]!!.cells)
+        assertNull(view.policy.clients["a1b2c3"]!!.snoozeUntil)
+        assertNull(view.capabilities.webPush)
+        assertTrue(view.capabilities.email.available)
+        assertEquals(3, view.presets.size)
+        assertEquals(3, view.quietTemplates["nightsWeekends"]!!.size)
+        assertEquals("android", view.clientsMeta[1].kind)
+        // resolveCell: the install's override wins; otherwise the account cell.
+        assertEquals(false, view.policy.resolveCell("a1b2c3", "dm", "sound"))
+        assertEquals(true, view.policy.resolveCell("a1b2c3", "mention", "sound"))
+        assertEquals(true, view.policy.resolveCell("web", "dm", "sound"))
+        assertEquals(false, view.effective!!.matrix["dm"]!!.sound)
+        assertEquals(false, me.muteAll)
+    }
+
+    @Test
+    fun malformedNotificationPolicyKeepsMeDecodable() = runTest {
+        server.enqueue(MockResponse().setBody("""{"id":"u1","username":"kev","notificationPolicy":{"policy":5,"rev":"x"}}"""))
+        val me = api.me().getOrThrow()
+        assertEquals("kev", me.username)
+        assertNull(me.notificationPolicy)
+        server.enqueue(MockResponse().setBody("""{"id":"u1","username":"kev","notificationPolicy":null}"""))
+        assertNull(api.me().getOrThrow().notificationPolicy)
+        server.enqueue(MockResponse().setBody("""{"id":"u1","username":"kev","notificationPolicy":[]}"""))
+        assertNull(api.me().getOrThrow().notificationPolicy)
+    }
+
+    @Test
+    fun policyPatchSendsIfMatchAndDecodesTheView() = runTest {
+        server.enqueue(MockResponse().setBody(policyViewJson(rev = 13, preset = "everything")))
+        val patch = buildJsonObject { put("applyPreset", "everything") }
+        val view = api.patchNotificationPolicy(patch, 12).getOrThrow()
+        assertEquals(13L, view.rev)
+        val req = server.takeRequest()
+        assertEquals("PATCH", req.method)
+        assertEquals("/api/me/notification-policy", req.path)
+        assertEquals("\"np-12\"", req.getHeader("If-Match"))
+        assertEquals("""{"applyPreset":"everything"}""", req.body.readUtf8())
+
+        server.enqueue(MockResponse().setBody(policyViewJson(rev = 14)))
+        api.patchNotificationClient("self", buildJsonObject { put("snoozeUntil", -1) }, 13).getOrThrow()
+        val client = server.takeRequest()
+        assertEquals("PATCH", client.method)
+        assertEquals("/api/me/notification-policy/clients/self", client.path)
+        assertEquals("\"np-13\"", client.getHeader("If-Match"))
+
+        server.enqueue(MockResponse().setBody(policyViewJson(rev = 15)))
+        api.snoozeNotifications(buildJsonObject { put("seconds", 3600); put("client", "self") }).getOrThrow()
+        val snooze = server.takeRequest()
+        assertEquals("POST", snooze.method)
+        assertEquals("/api/me/notifications/snooze", snooze.path)
+        assertNull(snooze.getHeader("If-Match"))
+    }
+
+    @Test
+    fun policyConflictCarriesTheCurrentView() = runTest {
+        server.enqueue(
+            MockResponse().setResponseCode(409).setBody(
+                """{"error":"The notification settings changed elsewhere; reload and retry","code":"rev_conflict",
+                "current":${policyViewJson(rev = 20)}}""",
+            ),
+        )
+        val error = api.patchNotificationPolicy(buildJsonObject { put("snoozeUntil", 0) }, 12).exceptionOrNull()
+        assertTrue(error is SiteApiError.Conflict)
+        error as SiteApiError.Conflict
+        assertEquals("The notification settings changed elsewhere; reload and retry", error.message)
+        assertEquals(20L, error.currentPolicy()!!.rev)
+        // A 409 without a JSON body stays a plain failure.
+        assertEquals(SiteApiError.Server(409), SiteApiError.failure(409, "nope"))
+    }
 }

@@ -1,0 +1,309 @@
+{
+  "source": "ircfiber-site fixtures/notify/vectors.json",
+  "highlight": [
+    {
+      "text": "me: ping",
+      "nick": "me",
+      "words": [],
+      "wholeWord": true,
+      "caseSensitive": false,
+      "mention": true,
+      "urgent": false
+    },
+    {
+      "text": "ping ME.",
+      "nick": "me",
+      "words": [],
+      "wholeWord": true,
+      "caseSensitive": false,
+      "mention": true,
+      "urgent": false
+    },
+    {
+      "text": "me_ is away",
+      "nick": "me",
+      "words": [],
+      "wholeWord": true,
+      "caseSensitive": false,
+      "mention": false,
+      "urgent": false
+    },
+    {
+      "text": "[me] hi",
+      "nick": "me",
+      "words": [],
+      "wholeWord": true,
+      "caseSensitive": false,
+      "mention": false,
+      "urgent": false
+    },
+    {
+      "text": "{me}",
+      "nick": "me",
+      "words": [],
+      "wholeWord": true,
+      "caseSensitive": false,
+      "mention": false,
+      "urgent": false
+    },
+    {
+      "text": "hi me",
+      "nick": "me",
+      "words": [],
+      "wholeWord": true,
+      "caseSensitive": false,
+      "mention": true,
+      "urgent": false
+    },
+    {
+      "text": "nothing here",
+      "nick": "me",
+      "words": [],
+      "wholeWord": true,
+      "caseSensitive": false,
+      "mention": false,
+      "urgent": false
+    },
+    {
+      "text": "",
+      "nick": "me",
+      "words": [],
+      "wholeWord": true,
+      "caseSensitive": false,
+      "mention": false,
+      "urgent": false
+    },
+    {
+      "text": "IRC Fiber rocks",
+      "nick": "me",
+      "words": [
+        {
+          "w": "fiber",
+          "urgent": false
+        }
+      ],
+      "wholeWord": true,
+      "caseSensitive": false,
+      "mention": true,
+      "urgent": false
+    },
+    {
+      "text": "fibers everywhere",
+      "nick": "me",
+      "words": [
+        {
+          "w": "fiber",
+          "urgent": false
+        }
+      ],
+      "wholeWord": true,
+      "caseSensitive": false,
+      "mention": false,
+      "urgent": false
+    },
+    {
+      "text": "fibers everywhere",
+      "nick": "me",
+      "words": [
+        {
+          "w": "fiber",
+          "urgent": false
+        }
+      ],
+      "wholeWord": false,
+      "caseSensitive": false,
+      "mention": true,
+      "urgent": false
+    },
+    {
+      "text": "FIBERS everywhere",
+      "nick": "me",
+      "words": [
+        {
+          "w": "fiber",
+          "urgent": false
+        }
+      ],
+      "wholeWord": false,
+      "caseSensitive": false,
+      "mention": true,
+      "urgent": false
+    },
+    {
+      "text": "FIBERS everywhere",
+      "nick": "me",
+      "words": [
+        {
+          "w": "fiber",
+          "urgent": false
+        }
+      ],
+      "wholeWord": false,
+      "caseSensitive": true,
+      "mention": false,
+      "urgent": false
+    },
+    {
+      "text": "Fiber rocks",
+      "nick": "me",
+      "words": [
+        {
+          "w": "Fiber",
+          "urgent": false
+        }
+      ],
+      "wholeWord": true,
+      "caseSensitive": true,
+      "mention": true,
+      "urgent": false
+    },
+    {
+      "text": "fiber rocks",
+      "nick": "me",
+      "words": [
+        {
+          "w": "Fiber",
+          "urgent": false
+        }
+      ],
+      "wholeWord": true,
+      "caseSensitive": true,
+      "mention": false,
+      "urgent": false
+    },
+    {
+      "text": "the outage is over",
+      "nick": "me",
+      "words": [
+        {
+          "w": "outage",
+          "urgent": true
+        }
+      ],
+      "wholeWord": true,
+      "caseSensitive": false,
+      "mention": true,
+      "urgent": true
+    },
+    {
+      "text": "outages happen",
+      "nick": "me",
+      "words": [
+        {
+          "w": "outage",
+          "urgent": true
+        }
+      ],
+      "wholeWord": true,
+      "caseSensitive": false,
+      "mention": false,
+      "urgent": false
+    },
+    {
+      "text": "me: outage!",
+      "nick": "me",
+      "words": [
+        {
+          "w": "outage",
+          "urgent": true
+        }
+      ],
+      "wholeWord": true,
+      "caseSensitive": false,
+      "mention": true,
+      "urgent": true
+    },
+    {
+      "text": "me: deploy",
+      "nick": "me",
+      "words": [
+        {
+          "w": "outage",
+          "urgent": true
+        },
+        {
+          "w": "deploy",
+          "urgent": false
+        }
+      ],
+      "wholeWord": true,
+      "caseSensitive": false,
+      "mention": true,
+      "urgent": false
+    },
+    {
+      "text": "deploy outage",
+      "nick": "me",
+      "words": [
+        {
+          "w": "outage",
+          "urgent": true
+        },
+        {
+          "w": "deploy",
+          "urgent": false
+        }
+      ],
+      "wholeWord": true,
+      "caseSensitive": false,
+      "mention": true,
+      "urgent": true
+    },
+    {
+      "text": "CAFÉ time",
+      "nick": "me",
+      "words": [
+        {
+          "w": "café",
+          "urgent": false
+        }
+      ],
+      "wholeWord": true,
+      "caseSensitive": false,
+      "mention": true,
+      "urgent": false
+    },
+    {
+      "text": "cafés",
+      "nick": "me",
+      "words": [
+        {
+          "w": "café",
+          "urgent": false
+        }
+      ],
+      "wholeWord": true,
+      "caseSensitive": false,
+      "mention": false,
+      "urgent": false
+    },
+    {
+      "text": "a.b.c",
+      "nick": "me",
+      "words": [
+        {
+          "w": "b.c",
+          "urgent": false
+        }
+      ],
+      "wholeWord": true,
+      "caseSensitive": false,
+      "mention": true,
+      "urgent": false
+    },
+    {
+      "text": "nick-name",
+      "nick": "me",
+      "words": [
+        {
+          "w": "nick",
+          "urgent": false
+        }
+      ],
+      "wholeWord": true,
+      "caseSensitive": false,
+      "mention": true,
+      "urgent": false
+    }
+  ]
+}

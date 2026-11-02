@@ -62,6 +62,7 @@ import com.kevinpostal.fiberirc.data.prefs.AccountSettingsStore
 import com.kevinpostal.fiberirc.data.prefs.BlockListStore
 import com.kevinpostal.fiberirc.data.prefs.DeviceSettingsStore
 import com.kevinpostal.fiberirc.data.prefs.DisplaySettingsStore
+import com.kevinpostal.fiberirc.data.prefs.NotificationPolicyStore
 import com.kevinpostal.fiberirc.data.prefs.NotificationPrefsStore
 import com.kevinpostal.fiberirc.ui.shell.SessionActions
 import com.kevinpostal.fiberirc.ui.theme.Appearance
@@ -78,7 +79,8 @@ enum class SettingsRoute { ROOT, ACCOUNT, CHANGE_PASSWORD, SESSIONS, BOUNCER, TH
 
 /**
  * Gear → Settings as one self-contained flow: the root list and every screen it pushes, with Back popping
- * (system back included). [onClose] leaves Settings from the root.
+ * (system back included). [onClose] leaves Settings from the root. Notifications opens the v2 policy screen when the
+ * server has a notification policy, else the v1 screen (older servers).
  */
 @Composable
 fun SettingsFlow(
@@ -88,6 +90,7 @@ fun SettingsFlow(
     deviceSettings: DeviceSettingsStore,
     displaySettings: DisplaySettingsStore,
     notificationPrefs: NotificationPrefsStore,
+    notificationPolicy: NotificationPolicyStore,
     blockList: BlockListStore,
     sessionActions: SessionActions,
     onClose: () -> Unit,
@@ -96,9 +99,10 @@ fun SettingsFlow(
     val push: (SettingsRoute) -> Unit = { stack = stack + it }
     val pop: () -> Unit = { if (stack.size > 1) stack = stack.dropLast(1) else onClose() }
     val openLinksInApp = { deviceSettings.settings.value.openLinksInApp }
+    val policyView by notificationPolicy.view.collectAsStateWithLifecycle()
     when (stack.last()) {
         SettingsRoute.ROOT -> SettingsScreen(
-            api, baseUrl, accountSettings, deviceSettings, displaySettings, notificationPrefs, blockList,
+            api, baseUrl, accountSettings, deviceSettings, displaySettings, notificationPrefs, notificationPolicy, blockList,
             sessionActions, onNavigate = push, onClose = pop,
         )
         SettingsRoute.ACCOUNT -> AccountScreen(api, onChangePassword = { push(SettingsRoute.CHANGE_PASSWORD) }, onBack = pop)
@@ -107,8 +111,20 @@ fun SettingsFlow(
         SettingsRoute.BOUNCER -> BouncerScreen(api, onBack = pop)
         SettingsRoute.THIS_DEVICE -> ThisDeviceScreen(api, onBack = pop)
         SettingsRoute.DISPLAY -> DisplaySettingsScreen(displaySettings, accountSettings, deviceSettings, onBack = pop)
-        SettingsRoute.NOTIFICATIONS -> NotificationSettingsScreen(notificationPrefs, onBack = pop)
-        SettingsRoute.HIGHLIGHTS -> HighlightWordsScreen(accountSettings, onBack = pop)
+        SettingsRoute.NOTIFICATIONS -> if (policyView != null) {
+            val highlightWords by accountSettings.highlightWords.collectAsStateWithLifecycle()
+            NotificationPolicyScreen(
+                notificationPolicy,
+                highlightWordCount = highlightWords.size,
+                baseUrl = baseUrl,
+                openLinksInApp = openLinksInApp(),
+                onOpenHighlightWords = { push(SettingsRoute.HIGHLIGHTS) },
+                onBack = pop,
+            )
+        } else {
+            NotificationSettingsScreen(notificationPrefs, onBack = pop)
+        }
+        SettingsRoute.HIGHLIGHTS -> HighlightWordsScreen(accountSettings, notificationPolicy, onBack = pop)
         SettingsRoute.BLOCKED -> BlockedUsersScreen(blockList, onBack = pop)
     }
 }
@@ -174,6 +190,7 @@ fun SettingsScreen(
     deviceSettings: DeviceSettingsStore,
     displaySettings: DisplaySettingsStore,
     notificationPrefs: NotificationPrefsStore,
+    notificationPolicy: NotificationPolicyStore,
     blockList: BlockListStore,
     sessionActions: SessionActions,
     onNavigate: (SettingsRoute) -> Unit,
@@ -201,6 +218,7 @@ fun SettingsScreen(
             onSuccess = { me ->
                 accountSettings.load(me)
                 notificationPrefs.load(me)
+                notificationPolicy.load(me)
                 Profile.SignedIn(me.username, me.email)
             },
             onFailure = { Profile.SignedOut },

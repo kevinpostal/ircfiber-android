@@ -1,25 +1,22 @@
 package com.kevinpostal.fiberirc.ui.settings
 
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.BrightnessMedium
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.TextDecrease
 import androidx.compose.material.icons.filled.TextIncrease
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -148,8 +145,8 @@ internal fun snapFontScale(percentValue: Float): Double = ((percentValue / 10f).
  * Settings → Display (ports `DisplaySettingsViewController`), in IRCCloud's sections: this device's appearance,
  * message layout, chat & embeds, device options, font size and photo sharing. Rows bind to [DeviceSettingsStore]
  * (kept on this device), [DisplaySettingsStore] (appearance) or [AccountSettingsStore] (kept on the account under
- * this install's profile: POST /api/me/display-prefs, POST /api/me/show-member-prefixes); each saves at once and
- * a failed account save puts the control back.
+ * this install's profile: POST /api/me/display-prefs, POST /api/me/show-member-prefixes); each saves at once (the
+ * font size slider on release) and a failed account save puts the control back.
  */
 @Composable
 fun DisplaySettingsScreen(
@@ -244,7 +241,7 @@ fun DisplaySettingsScreen(
             header = "Font Size",
             footer = "Chat text on this device, on top of the system font size (Settings → Display → Font size).",
             rows = listOf(
-                { FontScaleSlider(device.chatFontScale) { scale -> deviceSettings.update { it.copy(chatFontScale = scale) } } },
+                { FontScaleSlider(prefs.chatFontScale) { s -> save { accountSettings.updateDisplay { it.copy(chatScalePct = (s * 100).roundToInt()) } } } },
                 {
                     androidx.compose.foundation.layout.Row(
                         Modifier.fillMaxWidth().padding(horizontal = Grid.margin, vertical = Grid.gutter),
@@ -254,10 +251,10 @@ fun DisplaySettingsScreen(
                             "The quick brown fox jumps over the lazy dog.",
                             color = c.chatText,
                             fontFamily = sampleFamily(prefs.monospaceFont),
-                            fontSize = (15 * device.chatFontScale).sp,
+                            fontSize = (15 * prefs.chatFontScale).sp,
                             modifier = Modifier.weight(1f),
                         )
-                        Text(percent(device.chatFontScale), color = c.textSecondary, modifier = Modifier.padding(start = Grid.gutter))
+                        Text(percent(prefs.chatFontScale), color = c.textSecondary, modifier = Modifier.padding(start = Grid.gutter))
                     }
                 },
             ),
@@ -272,14 +269,21 @@ fun DisplaySettingsScreen(
     ErrorDialog(alerts)
 }
 
-/** 80–140 % in 10 % steps; dragging snaps and saves, so the sample row follows at once. */
+/** 80–140 % in 10 % steps; dragging snaps, and releasing saves once ([onCommit]), so the sample row follows the save. */
 @Composable
-private fun FontScaleSlider(scale: Double, onChange: (Double) -> Unit) {
+private fun FontScaleSlider(scale: Double, onCommit: (Double) -> Unit) {
     val c = LocalFiberIrcColors.current
-    val range = DeviceSettings.CHAT_FONT_SCALE_RANGE
+    val range = DisplayPrefs.CHAT_SCALE_PCT_RANGE
     var dragging by remember { mutableStateOf(false) }
     var value by remember { mutableFloatStateOf((scale * 100).toFloat()) }
-    if (!dragging) value = (scale * 100).toFloat()
+    var pending by remember { mutableDoubleStateOf(scale) }
+    // Follows the saved value (a commit, a failed save putting it back, another device's change) except mid-drag.
+    LaunchedEffect(scale) {
+        if (!dragging) {
+            value = (scale * 100).toFloat()
+            pending = scale
+        }
+    }
     androidx.compose.foundation.layout.Row(
         Modifier.fillMaxWidth().padding(horizontal = Grid.margin),
         verticalAlignment = Alignment.CenterVertically,
@@ -289,56 +293,19 @@ private fun FontScaleSlider(scale: Double, onChange: (Double) -> Unit) {
             value = value,
             onValueChange = { v ->
                 dragging = true
-                val snapped = snapFontScale(v)
-                value = (snapped * 100).toFloat()
-                if (snapped != scale) onChange(snapped)
+                pending = snapFontScale(v)
+                value = (pending * 100).toFloat()
             },
-            onValueChangeFinished = { dragging = false },
-            valueRange = (range.start * 100).toFloat()..(range.endInclusive * 100).toFloat(),
+            onValueChangeFinished = {
+                dragging = false
+                if (pending != scale) onCommit(pending)
+            },
+            valueRange = range.first.toFloat()..range.last.toFloat(),
             steps = 5,
             colors = SliderDefaults.colors(activeTrackColor = c.accent, thumbColor = c.accent),
             modifier = Modifier.weight(1f).padding(horizontal = Grid.gutter),
         )
         Icon(Icons.Filled.TextIncrease, contentDescription = null, tint = c.textSecondary)
-    }
-}
-
-/** A row whose value opens a menu of [options]; picking another one calls [choose] (`popUp`). */
-@Composable
-private fun <T> PopUpRow(
-    title: String,
-    options: List<T>,
-    selected: T,
-    label: (T) -> String,
-    subtitle: (T) -> String? = { null },
-    choose: (T) -> Unit,
-) {
-    val c = LocalFiberIrcColors.current
-    var open by remember { mutableStateOf(false) }
-    SettingsRow(title, onClick = { open = true }) {
-        Box {
-            TextButton(onClick = { open = true }) {
-                Text(label(selected), color = c.link)
-                Icon(Icons.Filled.ArrowDropDown, contentDescription = null, tint = c.link)
-            }
-            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-                for (option in options) {
-                    DropdownMenuItem(
-                        text = {
-                            androidx.compose.foundation.layout.Column {
-                                Text(label(option))
-                                subtitle(option)?.let { Text(it, color = c.textSecondary, fontSize = 12.sp) }
-                            }
-                        },
-                        trailingIcon = if (option == selected) ({ Icon(Icons.Filled.Check, contentDescription = "Selected") }) else null,
-                        onClick = {
-                            open = false
-                            if (option != selected) choose(option)
-                        },
-                    )
-                }
-            }
-        }
     }
 }
 

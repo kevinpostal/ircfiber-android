@@ -6,6 +6,7 @@ import androidx.compose.ui.unit.sp
 import com.kevinpostal.fiberirc.data.irc.IrcFormatting
 import com.kevinpostal.fiberirc.data.irc.IrcLine
 import com.kevinpostal.fiberirc.data.irc.IrcLineKind
+import com.kevinpostal.fiberirc.data.prefs.HighlightOptions
 import com.kevinpostal.fiberirc.data.prefs.ModeIndicator
 import com.kevinpostal.fiberirc.ui.theme.nickColor
 import java.util.regex.Pattern
@@ -89,29 +90,43 @@ object EmojiOnly {
 }
 
 /**
- * The account's highlight words (web `checkHighlight`): someone else's chat line containing one as a whole word,
- * case-insensitively, is highlighted like a mention of your nick.
+ * The account's highlight words (web `checkHighlight`, Notification Policy v2 `matchWord`): someone else's chat line
+ * containing one is highlighted like a mention of your nick. [HighlightOptions] decide whole-word (nick characters
+ * `A-Z a-z 0-9 _ [ ] { }` aren't boundaries) and case-sensitive matching; v1 servers: whole word, ignoring case.
  */
 object HighlightMatcher {
-    /** One compiled pattern per word list. */
-    private var cachedWords: List<String>? = null
+    private const val EDGE = "[a-zA-Z0-9_\\[\\]{}]"
+
+    /** One compiled pattern per word list and options. */
+    private var cachedKey: Pair<List<String>, HighlightOptions>? = null
     private var cachedRegex: Regex? = null
 
-    fun matches(line: IrcLine, words: List<String>, ownNick: String): Boolean {
+    fun matches(line: IrcLine, words: List<String>, ownNick: String, options: HighlightOptions = HighlightOptions()): Boolean {
         if (words.isEmpty()) return false
         if (line.kind != IrcLineKind.MESSAGE && line.kind != IrcLineKind.ACTION && line.kind != IrcLineKind.NOTICE) return false
         val sender = line.sender
         if (sender != null && sender.equals(ownNick, ignoreCase = true)) return false
-        if (cachedWords != words) {
-            val terms = words.map { it.trim() }.filter { it.isNotEmpty() }
-            val edge = "[a-zA-Z0-9_\\[\\]{}]"
-            val alternation = terms.joinToString("|") { Pattern.quote(it) }
-            cachedRegex = if (terms.isEmpty()) null
-            else runCatching { Regex("(?<!$edge)(?:$alternation)(?!$edge)", RegexOption.IGNORE_CASE) }.getOrNull()
-            cachedWords = words
+        val key = words to options
+        if (cachedKey != key) {
+            cachedRegex = pattern(words, options)
+            cachedKey = key
         }
         val regex = cachedRegex ?: return false
         return regex.containsMatchIn(IrcFormatting.strip(line.text))
+    }
+
+    /** Whether plain [text] contains [word] under [options]. */
+    fun matchesWord(text: String, word: String, options: HighlightOptions): Boolean =
+        pattern(listOf(word), options)?.containsMatchIn(text) ?: false
+
+    /** Any of [words] (trimmed, blanks dropped) under [options]; null when there is nothing to match. */
+    private fun pattern(words: List<String>, options: HighlightOptions): Regex? {
+        val terms = words.map { it.trim() }.filter { it.isNotEmpty() }
+        if (terms.isEmpty()) return null
+        val alternation = terms.joinToString("|") { Pattern.quote(it) }
+        val body = if (options.wholeWord) "(?<!$EDGE)(?:$alternation)(?!$EDGE)" else "(?:$alternation)"
+        val flags = if (options.caseSensitive) emptySet() else setOf(RegexOption.IGNORE_CASE)
+        return runCatching { Regex(body, flags) }.getOrNull()
     }
 }
 

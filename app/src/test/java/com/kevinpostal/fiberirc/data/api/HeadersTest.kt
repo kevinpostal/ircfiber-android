@@ -48,7 +48,27 @@ class HeadersTest {
         assertEquals("id-1", get.getHeader(DEVICE_HEADER))
         assertEquals("FiberIRC Android", get.getHeader("User-Agent"))
         assertEquals("application/json", get.getHeader("Accept"))
+        assertEquals(java.time.ZoneId.systemDefault().id, get.getHeader(DEVICE_TZ_HEADER))
         assertEquals(originOf(server.url("/")), server.takeRequest().getHeader("Origin"))
         server.shutdown()
+    }
+
+    @Test
+    fun timeZoneHeaderIsReadPerRequest() {
+        val server = MockWebServer()
+        server.start()
+        val client = OkHttpClient.Builder().addInterceptor(fiberIrcHeaderInterceptor({ "id-1" }, server.url("/").toString())).build()
+        val original = java.util.TimeZone.getDefault()
+        try {
+            for (zone in listOf("Europe/Berlin", "America/Los_Angeles")) {
+                java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone(zone))
+                server.enqueue(MockResponse())
+                client.newCall(Request.Builder().url(server.url("/api/me")).build()).execute().close()
+                assertEquals(zone, server.takeRequest().getHeader(DEVICE_TZ_HEADER))
+            }
+        } finally {
+            java.util.TimeZone.setDefault(original)
+            server.shutdown()
+        }
     }
 }

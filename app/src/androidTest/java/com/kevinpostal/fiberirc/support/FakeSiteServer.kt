@@ -84,6 +84,59 @@ class FakeSiteServer(private val context: Context) {
         on("GET", "/api/me/irc-account", body = """{"status":"ready","account":"tester","password":"x"}""")
         on("POST", "/api/me/irc-account/retry")
     }
+
+    /**
+     * Notification Policy v2: GET `/api/me/notification-policy` answers [view]; the policy and `clients/self`
+     * PATCHes and POST `/api/me/notifications/snooze` answer [onWrite] for the request (by default [view]).
+     */
+    fun defaultsNotificationPolicy(view: String, onWrite: (RecordedRequest) -> MockResponse = { MockResponse().setBody(view) }) {
+        on("GET", "/api/me/notification-policy", body = view)
+        for ((method, path) in listOf(
+            "PATCH" to "/api/me/notification-policy",
+            "PATCH" to "/api/me/notification-policy/clients/self",
+            "POST" to "/api/me/notifications/snooze",
+        )) {
+            routes["$method $path"] = { onWrite(seen.last { it.method == method && it.path?.substringBefore('?') == path }) }
+        }
+    }
+}
+
+/**
+ * A `NotificationPolicyView` (gateway `policyView` with `X-IRCFiber-Device`) at [rev]: the `focused` or `everything`
+ * matrix per [preset], this install known as `self01` without overrides, quiet hours off.
+ */
+fun fakePolicyViewJson(rev: Long, preset: String = "focused"): String {
+    fun cells(d: Boolean, s: Boolean, m: Boolean) = """{"desktop":$d,"sound":$s,"mobile":$m,"email":false}"""
+    fun p(d: Boolean, s: Boolean, m: Boolean) = """{"desktop":$d,"sound":$s,"mobile":$m}"""
+    val matrix = if (preset == "everything") {
+        """{"dm":${cells(true, true, true)},"mention":${cells(true, true, true)},"all":${cells(true, true, true)},
+           "invite":${cells(true, true, true)},"notice":${cells(true, true, true)},"wallops":${cells(true, false, true)}}"""
+    } else {
+        """{"dm":${cells(true, true, true)},"mention":${cells(true, true, true)},"all":${cells(true, false, false)},
+           "invite":${cells(true, false, true)},"notice":${cells(false, false, false)},"wallops":${cells(false, false, false)}}"""
+    }
+    return """
+    {"policy":{"v":2,"rev":$rev,"matrix":$matrix,"snoozeUntil":0,
+      "quiet":{"enabled":false,"tz":"","tzMode":"account","windows":[{"days":[0,1,2,3,4,5,6],"start":"22:00","end":"08:00"}],
+               "breakthrough":{"vip":[],"repeatSec":180,"urgentWords":true},"summary":true},
+      "highlight":{"words":[{"w":"outage","urgent":true}],"wholeWord":true,"caseSensitive":false},
+      "presentation":{"preview":"full","coalesceSec":30,"autoDismiss":true},"email":{"mode":"delay15","dailyHour":8},
+      "networks":{},"clients":{},"migratedAt":0,"bannerDismissed":false},
+     "rev":$rev,"prefVersion":${100 + rev},"preset":"$preset",
+     "presets":{
+       "everything":{"dm":${p(true, true, true)},"mention":${p(true, true, true)},"all":${p(true, true, true)},
+                     "invite":${p(true, true, true)},"notice":${p(true, true, true)},"wallops":${p(true, false, true)}},
+       "focused":{"dm":${p(true, true, true)},"mention":${p(true, true, true)},"all":${p(true, false, false)},
+                  "invite":${p(true, false, true)},"notice":${p(false, false, false)},"wallops":${p(false, false, false)}},
+       "quiet":{"dm":${p(true, false, true)},"mention":${p(true, false, false)},"all":${p(false, false, false)},
+                "invite":${p(false, false, false)},"notice":${p(false, false, false)},"wallops":${p(false, false, false)}}},
+     "quietTemplates":{"nights":[{"days":[0,1,2,3,4,5,6],"start":"22:00","end":"08:00"}]},
+     "clientsMeta":[{"ref":"web","kind":"web","label":"Web browsers"},
+                    {"ref":"self01","kind":"android","label":"Test phone","appVersion":"1.0 (1)","lastSeenAt":0,"push":true,"tz":"UTC"}],
+     "status":{"snoozedUntil":0,"quietNow":false,"quietEndsAt":0,"nextQuietStartsAt":0},
+     "capabilities":{"webPush":null,"email":{"available":true,"address":"t•••@example.com"}},
+     "selfRef":"self01"}
+    """.trimIndent()
 }
 
 /** `Me` JSON with the given username/id, every list/map field empty — the smallest valid `/api/me` answer. */

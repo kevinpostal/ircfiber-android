@@ -1,10 +1,18 @@
 package com.kevinpostal.fiberirc.data.prefs
 
 import com.kevinpostal.fiberirc.data.api.Me
+import com.kevinpostal.fiberirc.data.api.NotificationPolicyView
+import com.kevinpostal.fiberirc.data.api.PolicyHighlightWord
+import com.kevinpostal.fiberirc.data.api.SiteApiError
 import com.kevinpostal.fiberirc.data.api.SiteJson
+import com.kevinpostal.fiberirc.data.api.policyView
+import com.kevinpostal.fiberirc.data.api.policyViewJson
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -115,14 +123,32 @@ class StoresTest {
 
     @Test
     fun displayPrefsDecodeLenientlyAndPatchChangedKeys() {
-        val obj = SiteJson.parseToJsonElement("""{"showUserIcons":false,"modeIndicator":"weird","timestampFormat":"24h","enlargeEmoji":"no"}""").jsonObject
+        val obj = SiteJson.parseToJsonElement("""{"showUserIcons":false,"modeIndicator":"weird","timestampFormat":"24h","enlargeEmoji":"no","chatScalePct":120}""").jsonObject
         val d = DisplayPrefs.fromJson(obj)
         assertFalse(d.showUserIcons)
         assertEquals(ModeIndicator.DOTS, d.modeIndicator)
         assertEquals(TimestampFormat.TWENTY_FOUR_HOUR, d.timestampFormat)
         assertTrue(d.enlargeEmoji)
+        assertEquals(120, d.chatScalePct)
+        assertEquals(1.2, d.chatFontScale, 1e-9)
+        for (bad in listOf("7", "115.5", "\"120\"", "145", "112")) {
+            val o = SiteJson.parseToJsonElement("""{"chatScalePct":$bad}""").jsonObject
+            assertEquals(bad, 100, DisplayPrefs.fromJson(o).chatScalePct)
+        }
         assertEquals("""{"modeIndicator":"symbols"}""", d.copy(modeIndicator = ModeIndicator.SYMBOLS).patch(d).toString())
+        assertEquals("""{"chatScalePct":130}""", d.copy(chatScalePct = 130).patch(d).toString())
         assertEquals(d, DisplayPrefs.fromJson(d.toJson()))
+    }
+
+    @Test
+    fun deviceSettingsHandsOverLegacyChatFontScaleOnce() {
+        val prefs = MemoryPrefs().apply { edit().putString("device.chatFontScale", "1.2").apply() }
+        val store = DeviceSettingsStore(prefs)
+        assertEquals(120, store.takeLegacyChatScalePct())
+        assertNull(store.takeLegacyChatScalePct())
+        assertFalse(prefs.contains("device.chatFontScale"))
+        val atDefault = DeviceSettingsStore(MemoryPrefs().apply { edit().putString("device.chatFontScale", "1.0").apply() })
+        assertNull(atDefault.takeLegacyChatScalePct())
     }
 
     @Test
@@ -166,6 +192,152 @@ class StoresTest {
         assertFalse(store.muteAll.value)
         store.load(Me(id = "1", username = "u", muteAll = true))
         assertTrue(store.muteAll.value)
+    }
+
+    private fun conflict(rev: Long) = SiteApiError.Conflict(
+        SiteJson.parseToJsonElement("""{"error":"changed","code":"rev_conflict","current":${policyViewJson(rev = rev)}}"""),
+    )
+
+    private fun me(view: NotificationPolicyView?, muteAll: Boolean? = null) =
+        Me(id = "1", username = "u", muteAll = muteAll, notificationPolicy = view)
+
+    @Test
+    fun notificationPolicyRetriesOnceOnConflict() = runTest {
+        val revs = ArrayList<Long>()
+        lateinit var store: NotificationPolicyStore
+        store = NotificationPolicyStore(
+            MemoryPrefs(),
+            savePolicy = { patch, rev ->
+                revs += rev
+                assertEquals(JsonObject(mapOf("applyPreset" to JsonPrimitive("everything"))), patch)
+                // Optimistic: the preset's cells are applied and recognised before the server answers.
+                assertEquals("everything", store.view.value!!.preset)
+                assertTrue(store.view.value!!.policy.matrix["notice"]!!.mobile)
+                if (rev == 12L) throw conflict(20) else policyView(rev = 21, preset = "everything")
+            },
+            saveClient = null,
+            saveSnooze = null,
+        )
+        store.load(me(policyView()))
+        store.applyPreset("everything")
+        assertEquals(listOf(12L, 20L), revs)
+        assertEquals(21L, store.view.value!!.rev)
+        assertEquals("everything", store.view.value!!.preset)
+    }
+
+    @Test
+    fun notificationPolicyRevertsOnFailure() = runTest {
+        var failure: Exception = Boom()
+        val store = NotificationPolicyStore(MemoryPrefs(), savePolicy = { _, _ -> throw failure }, saveClient = null, saveSnooze = null)
+        val original = policyView()
+        store.load(me(original))
+        runCatching { store.patchPolicy(JsonObject(mapOf("quiet" to JsonObject(mapOf("enabled" to JsonPrimitive(true)))))) }
+        assertEquals(original, store.view.value)
+
+        // A second conflict is not retried again: the error surfaces and the server's view stays.
+        failure = conflict(20)
+        val error = runCatching { store.applyPreset("quiet") }.exceptionOrNull()
+        assertTrue(error is SiteApiError.Conflict)
+        assertEquals(20L, store.view.value!!.rev)
+        assertEquals("focused", store.view.value!!.preset)
+    }
+
+    @Test
+    fun notificationPolicyDeviceCellsOverrideOnlyWhenTheyDiffer() = runTest {
+        val sent = ArrayList<Pair<String, JsonObject>>()
+        val gate = CompletableDeferred<Unit>()
+        val store = NotificationPolicyStore(
+            MemoryPrefs(),
+            savePolicy = null,
+            saveClient = { ref, patch, _ ->
+                sent += ref to patch
+                if (!gate.isCompleted) gate.await()
+                policyView(rev = 13)
+            },
+            saveSnooze = null,
+        )
+        store.load(me(policyView()))
+        // dm.sound is overridden off; turning it back on equals the account cell, so the override goes.
+        val job = launch { store.setDeviceCell("dm", "sound", true) }
+        testScheduler.runCurrent()
+        assertEquals("self", sent.single().first)
+        assertEquals(JsonObject(mapOf("cells" to JsonObject(mapOf("dm.sound" to JsonNull)))), sent.single().second)
+        assertNull(store.view.value!!.policy.clients["a1b2c3"])
+        assertTrue(store.view.value!!.policy.resolveCell("a1b2c3", "dm", "sound"))
+        // /api/me during the save doesn't undo the edit.
+        store.load(me(policyView(rev = 12)))
+        assertNull(store.view.value!!.policy.clients["a1b2c3"])
+        gate.complete(Unit)
+        job.join()
+        assertEquals(13L, store.view.value!!.rev)
+
+        // all.mobile is off on the account: turning it on for this phone is an override.
+        sent.clear()
+        store.setDeviceCell("all", "mobile", true)
+        assertEquals(JsonObject(mapOf("cells" to JsonObject(mapOf("all.mobile" to JsonPrimitive(true))))), sent.single().second)
+    }
+
+    @Test
+    fun notificationPolicyLoadKeepsNewerAndClearsOnV1Servers() = runTest {
+        val words = ArrayList<List<String>>()
+        val store = NotificationPolicyStore(MemoryPrefs(), null, null, null)
+        store.onHighlightChanged = { h -> words += h.words.map { it.w } }
+        store.load(me(policyView(rev = 12)))
+        assertEquals(listOf(listOf("outage", "deploy")), words)
+        store.load(me(policyView(rev = 11, preset = "custom")))
+        assertEquals("focused", store.view.value!!.preset)
+        store.load(me(null))
+        assertEquals(12L, store.view.value!!.rev)
+        store.load(me(null, muteAll = false))
+        assertNull(store.view.value)
+
+        // The cache survives a restart; reset forgets it.
+        val prefs = MemoryPrefs()
+        val first = NotificationPolicyStore(prefs, null, null, null)
+        first.load(me(policyView()))
+        assertEquals(policyView(), NotificationPolicyStore(prefs, null, null, null).view.value)
+        first.reset()
+        assertNull(NotificationPolicyStore(prefs, null, null, null).view.value)
+    }
+
+    @Test
+    fun notificationPolicyUrgentStarAndHighlightSync() = runTest {
+        val settings = AccountSettingsStore(MemoryPrefs(), null, null, null)
+        val store = NotificationPolicyStore(MemoryPrefs(), null, null, null)
+        val stores = AccountStores(
+            accountSettings = settings,
+            notificationPrefs = NotificationPrefsStore(MemoryPrefs(), null),
+            notificationPolicy = store,
+            pinList = PinListStore(MemoryPrefs(), null, null, null),
+            archiveList = ArchiveListStore(MemoryPrefs(), null, null),
+            blockList = BlockListStore { },
+            networkLayout = NetworkLayoutStore(MemoryPrefs(), null, null),
+            bufferPrefs = BufferPrefsStore(MemoryPrefs(), null),
+        )
+        stores.reloadFromMe(me(policyView()))
+        assertEquals(listOf("outage", "deploy"), settings.highlightWords.value)
+        store.toggleUrgent("deploy")
+        assertEquals(
+            listOf(PolicyHighlightWord("outage", true), PolicyHighlightWord("deploy", true)),
+            store.view.value!!.policy.highlight.words,
+        )
+        store.patchPolicy(JsonObject(mapOf("highlight" to JsonObject(mapOf("caseSensitive" to JsonPrimitive(true))))))
+        assertEquals(HighlightOptions(wholeWord = true, caseSensitive = true), settings.highlightOptions.value)
+        store.setHighlightWords(listOf(PolicyHighlightWord("pager", true)))
+        assertEquals(listOf("pager"), settings.highlightWords.value)
+        stores.resetAccount()
+        assertNull(store.view.value)
+        assertEquals(HighlightOptions(), settings.highlightOptions.value)
+    }
+
+    @Test
+    fun mergePatchFollowsRfc7396() {
+        val target = SiteJson.parseToJsonElement("""{"a":"b","c":{"d":"e","f":"g"},"x":[1]}""")
+        val patch = SiteJson.parseToJsonElement("""{"a":"z","c":{"f":null},"x":[2,3]}""")
+        assertEquals(
+            SiteJson.parseToJsonElement("""{"a":"z","c":{"d":"e"},"x":[2,3]}"""),
+            NotificationPolicyStore.mergePatch(target, patch),
+        )
     }
 
     @Test

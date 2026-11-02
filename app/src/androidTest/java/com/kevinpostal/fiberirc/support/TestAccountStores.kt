@@ -8,6 +8,7 @@ import com.kevinpostal.fiberirc.data.prefs.ArchiveListStore
 import com.kevinpostal.fiberirc.data.prefs.BlockListStore
 import com.kevinpostal.fiberirc.data.prefs.BufferPrefsStore
 import com.kevinpostal.fiberirc.data.prefs.NetworkLayoutStore
+import com.kevinpostal.fiberirc.data.prefs.NotificationPolicyStore
 import com.kevinpostal.fiberirc.data.prefs.NotificationPrefsStore
 import com.kevinpostal.fiberirc.data.prefs.PinListStore
 
@@ -20,6 +21,7 @@ import com.kevinpostal.fiberirc.data.prefs.PinListStore
 fun testAccountStores(app: Application, api: SiteApi): AccountStores = AccountStores(
     accountSettings = AccountSettingsStore(app, api),
     notificationPrefs = NotificationPrefsStore(app, api),
+    notificationPolicy = NotificationPolicyStore(app, api),
     pinList = PinListStore(app, api),
     archiveList = ArchiveListStore(app, api),
     blockList = BlockListStore(api),
