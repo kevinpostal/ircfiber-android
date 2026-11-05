@@ -5,6 +5,8 @@ import com.kevinpostal.fiberirc.BuildConfig
 import com.kevinpostal.fiberirc.data.api.CookieJarStore
 import com.kevinpostal.fiberirc.data.api.SiteApi
 import com.kevinpostal.fiberirc.data.api.fiberIrcHttpClient
+import com.kevinpostal.fiberirc.data.e2ee.E2eePasskeys
+import com.kevinpostal.fiberirc.data.e2ee.E2eeService
 import com.kevinpostal.fiberirc.data.irc.ConnectionSettings
 import com.kevinpostal.fiberirc.data.irc.IrcSessionManager
 import com.kevinpostal.fiberirc.data.media.MediaApi
@@ -70,7 +72,18 @@ class Deps(private val app: Application, val apiBaseUrl: String = BuildConfig.AP
         it.onPublished = conversationShortcuts::publish
     }
 
-    /** A signed-in session's connections; [showLogin] leaves for the sign-in screen (rejected credentials). */
+    /** Native PRF passkeys for encryption backup/unlock; the root activity attaches to present the system sheets. */
+    val passkeys = E2eePasskeys(app, apiBaseUrl)
+
+    /**
+     * A signed-in session's connections and its account's encryption service (one per session, main process
+     * only); [showLogin] leaves for the sign-in screen (rejected credentials, expired session).
+     */
     fun sessionManager(settings: List<ConnectionSettings>, showLogin: (notice: String) -> Unit): IrcSessionManager =
-        IrcSessionManager(app, settings, api, { deviceIdentity.id }, showLogin)
+        IrcSessionManager(app, settings, api, { deviceIdentity.id }, showLogin) { manager ->
+            E2eeService(
+                app, api, httpClient, { deviceIdentity.id }, manager, bufferPrefs,
+                passkeys = passkeys.takeIf { it.supported },
+            )
+        }
 }

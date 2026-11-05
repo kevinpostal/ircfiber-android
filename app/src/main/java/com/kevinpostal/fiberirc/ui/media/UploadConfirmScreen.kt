@@ -56,16 +56,25 @@ import com.kevinpostal.fiberirc.ui.theme.Grid
 import com.kevinpostal.fiberirc.ui.theme.LocalFiberIrcColors
 
 /**
+ * What an encrypted buffer's upload or snippet actually protects: the posted link and message travel encrypted,
+ * the uploaded file (or snippet page) itself does not (web parity; uploads are never labelled end-to-end encrypted).
+ */
+const val ENCRYPTED_UPLOAD_NOTE =
+    "Encryption is on: your message and the link are encrypted, but the uploaded file itself is not end-to-end " +
+        "encrypted — anyone with the link can open it."
+
+/**
  * Before an upload (ports `UploadViewController`, `ios/UI/Media/UploadViewController.swift:82-203`): a preview, the
  * file size, the file name (editable) and an optional message. Send hands both back (a blank name keeps the
  * suggested one); Cancel dismisses. While [progress] is non-null the upload runs: a bar shows it and Send is off
- * (Cancel stops it).
+ * (Cancel stops it). [encrypted]: the buffer's lock isn't off, so [ENCRYPTED_UPLOAD_NOTE] is shown.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UploadConfirmScreen(
     payload: UploadPayload,
     progress: Float?,
+    encrypted: Boolean,
     onCancel: () -> Unit,
     onSend: (filename: String, message: String) -> Unit,
 ) {
@@ -154,6 +163,9 @@ fun UploadConfirmScreen(
                 colors = fieldColors(),
                 modifier = Modifier.fillMaxWidth().focusRequester(messageFocus),
             )
+            if (encrypted) {
+                Text(ENCRYPTED_UPLOAD_NOTE, color = c.textSecondary, style = MaterialTheme.typography.bodySmall)
+            }
             if (progress != null) {
                 Text(
                     "Uploading ${name.trim().ifEmpty { payload.filename }}…",

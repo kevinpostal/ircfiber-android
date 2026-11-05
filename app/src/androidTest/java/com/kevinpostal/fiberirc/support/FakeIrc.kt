@@ -4,6 +4,7 @@ import com.kevinpostal.fiberirc.data.irc.AppForegroundMonitoring
 import com.kevinpostal.fiberirc.data.irc.ConnectionEvent
 import com.kevinpostal.fiberirc.data.irc.ConnectionSettings
 import com.kevinpostal.fiberirc.data.irc.IrcClient
+import com.kevinpostal.fiberirc.data.irc.IrcEncryptionConfig
 import com.kevinpostal.fiberirc.data.irc.IrcSessionManager
 import com.kevinpostal.fiberirc.data.api.SiteApi
 import com.kevinpostal.fiberirc.data.irc.PathMonitoring
@@ -81,7 +82,7 @@ class FakeForegroundMonitor : AppForegroundMonitoring {
  * a server reply (001, JOIN, PRIVMSG, …).
  */
 fun fakeIrcClient(settings: ConnectionSettings, transport: FakeTransport = FakeTransport()): IrcClient {
-    val client = IrcClient(settings, transport, FakePathMonitor(), FakeForegroundMonitor())
+    val client = IrcClient(settings, transport, FakePathMonitor(), FakeForegroundMonitor(), encryption = IrcEncryptionConfig.Plaintext)
     client.connect()
     transport.simulateConnected()
     return client
@@ -102,7 +103,8 @@ class FakeSession(
         settings,
         api,
         clientId,
-        { s -> val t = FakeTransport(); transports[s] = t; fakeIrcClientFrom(s, t) },
+        // FakeTransport sessions are explicitly plaintext (no encryption service).
+        { s, encryption -> val t = FakeTransport(); transports[s] = t; fakeIrcClientFrom(s, t, encryption) },
         showLogin,
     )
 
@@ -110,8 +112,8 @@ class FakeSession(
     val transport: FakeTransport get() = transports.values.single()
 }
 
-private fun fakeIrcClientFrom(settings: ConnectionSettings, transport: FakeTransport): IrcClient {
-    val client = IrcClient(settings, transport, FakePathMonitor(), FakeForegroundMonitor())
+private fun fakeIrcClientFrom(settings: ConnectionSettings, transport: FakeTransport, encryption: IrcEncryptionConfig): IrcClient {
+    val client = IrcClient(settings, transport, FakePathMonitor(), FakeForegroundMonitor(), encryption = encryption)
     client.connect()
     transport.simulateConnected()
     return client

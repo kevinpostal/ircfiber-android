@@ -28,6 +28,7 @@ import com.kevinpostal.fiberirc.data.irc.IrcBuffer
 import com.kevinpostal.fiberirc.data.irc.IrcBufferKind
 import com.kevinpostal.fiberirc.data.irc.IrcClient
 import com.kevinpostal.fiberirc.data.irc.IrcState
+import com.kevinpostal.fiberirc.data.irc.IrcEncryptionConfig
 import com.kevinpostal.fiberirc.data.irc.LinkOpener
 import com.kevinpostal.fiberirc.data.irc.TypingState
 import com.kevinpostal.fiberirc.data.media.Snippet
@@ -47,6 +48,11 @@ import com.kevinpostal.fiberirc.ui.media.LogExportDialog
 import com.kevinpostal.fiberirc.ui.media.SnippetEditorScreen
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import com.kevinpostal.fiberirc.ui.encryption.AudienceSheet
+import com.kevinpostal.fiberirc.ui.encryption.ComposerEncryptionBanner
+import com.kevinpostal.fiberirc.ui.encryption.ComposerLockControl
+import com.kevinpostal.fiberirc.ui.encryption.UnlockDialog
+import com.kevinpostal.fiberirc.ui.encryption.rememberComposerEncryption
 import java.time.Instant
 
 /** Gear-menu items that open screens the session host owns. */
@@ -78,6 +84,7 @@ fun BufferComposer(
     val client = shown.client
     val buffer = shown.buffer
     val device by deps.deviceSettings.settings.collectAsState()
+    val display by deps.accountSettings.display.collectAsState()
     val infos by controller.manager.networkInfos.collectAsState()
     val revision by controller.manager.revision.collectAsState()
 
@@ -175,6 +182,7 @@ fun BufferComposer(
         archived = deps.archiveList.isArchived(networkId, buffer.name),
         networkConnected = infos.firstOrNull { it.id == networkId }?.let { it.connected == true },
         rank = buffer.member(client.nick)?.rank ?: 0,
+        encryption = controller.manager.e2ee != null && client.encryption is IrcEncryptionConfig.Encrypted && networkId.isNotEmpty(),
     )
     val callbacks = BufferActionCallbacks(
         onPin = { controller.setPinned(true, client, buffer) },
@@ -202,7 +210,20 @@ fun BufferComposer(
             LinkOpener.open(context, "${BuildConfig.API_BASE_URL.trimEnd('/')}/support", device.openLinksInApp)
         },
         onSignOut = { scope.launch { actions.signOut() } },
+        onEncryption = { controller.navigation.conversationEncryption(client, buffer) },
     )
+
+    // Encryption (bouncer networks of a signed-in account): the lock, its state line, audience and unlock.
+    val encryption = rememberComposerEncryption(controller.manager.e2ee, client, buffer, deps.bufferPrefs, revision)
+    var lockError by remember(buffer) { mutableStateOf<String?>(null) }
+    var audienceOpen by remember(buffer) { mutableStateOf(false) }
+    var unlockOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(lockError) {
+        if (lockError != null) {
+            delay(6_000)
+            lockError = null
+        }
+    }
 
     ComposerBar(
         value = value,
@@ -238,7 +259,7 @@ fun BufferComposer(
         typingText = typingText,
         convertEmoji = device.convertEmoji,
         autoCapitalization = device.autoCapitalization,
-        chatFontScale = device.chatFontScale,
+        chatFontScale = display.chatFontScale,
         interceptSend = { plain ->
             // An edit ends with this send, whichever way the text goes.
             sendingEdit = editingMsgid
@@ -269,7 +290,37 @@ fun BufferComposer(
             if (!plain.startsWith("/")) controller.showTip(FirstRunTip.DOUBLE_TAP)
         },
         modifier = Modifier.focusRequester(fieldFocus),
+        lockControl = encryption?.let { enc ->
+            {
+                ComposerLockControl(
+                    enc,
+                    onDetails = { controller.navigation.conversationEncryption(client, buffer) },
+                    onAudience = { audienceOpen = true },
+                    onUnlock = { unlockOpen = true },
+                    onError = { lockError = it },
+                )
+            }
+        },
+        encryptionBanner = encryption?.let { enc ->
+            {
+                ComposerEncryptionBanner(
+                    enc,
+                    peer = buffer.name.takeIf { buffer.kind == IrcBufferKind.QUERY },
+                    revision = revision,
+                    error = lockError,
+                    onAudience = { audienceOpen = true },
+                    onUnlock = { unlockOpen = true },
+                )
+            }
+        },
     )
+
+    if (audienceOpen && encryption != null) {
+        AudienceSheet(encryption.service, networkId, buffer, client.nick, revision, onDismiss = { audienceOpen = false })
+    }
+    if (unlockOpen) {
+        controller.manager.e2ee?.let { UnlockDialog(it, onDismiss = { unlockOpen = false }) }
+    }
 
     if (uploading) {
         UploadActionSheet(client, buffer, deps.media, deps.deviceSettings, onDismiss = { uploading = false })

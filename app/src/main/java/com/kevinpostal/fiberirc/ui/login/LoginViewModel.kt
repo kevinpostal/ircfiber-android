@@ -17,6 +17,7 @@ import com.kevinpostal.fiberirc.data.api.SiteApi
 import com.kevinpostal.fiberirc.data.api.SiteApiError
 import com.kevinpostal.fiberirc.data.irc.ConnectionSettings
 import com.kevinpostal.fiberirc.data.prefs.AccountStores
+import com.kevinpostal.fiberirc.data.prefs.DeviceSettingsStore
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -54,6 +55,7 @@ data class LoginUiState(
 class LoginViewModel(
     private val api: SiteApi,
     private val stores: AccountStores,
+    private val deviceSettings: DeviceSettingsStore,
     private val deviceId: () -> String,
     private val appPrefs: SharedPreferences,
     private val notice: String?,
@@ -114,7 +116,7 @@ class LoginViewModel(
 
     private fun webSignInUrl(segments: List<String>): String? {
         if (_state.value.busy) return null
-        return api.url(segments, mapOf("app" to "fiberirc")).toString()
+        return appSignInUrl(api, segments)
     }
 
     /** The `fiberirc://auth?code=` hand-off (MainActivity `onCreate`/`onNewIntent`); false when [uri] isn't one. */
@@ -183,6 +185,10 @@ class LoginViewModel(
      */
     private suspend fun connect(me: Me) {
         stores.loadAtLogin(me)
+        // The pre-sync local Font Size moves onto this device's display prefs, once; a failed save is dropped.
+        deviceSettings.takeLegacyChatScalePct()?.let { pct ->
+            runCatching { stores.accountSettings.updateDisplay { it.copy(chatScalePct = pct) } }
+        }
         if (!acceptGuidelines()) {
             api.logout()
             show("")
@@ -269,6 +275,12 @@ class LoginViewModel(
             if (uri == null || uri.scheme != "fiberirc" || uri.host != "auth") return null
             return uri.getQueryParameter("code").orEmpty()
         }
+
+        /**
+         * `<base>/<segments>?app=fiberirc`: a web sign-in in a Custom Tab that hands the account back on
+         * `fiberirc://auth?code=` (social sign-in, signup, and the encryption settings' organization sign-in).
+         */
+        fun appSignInUrl(api: SiteApi, segments: List<String>): String = api.url(segments, mapOf("app" to "fiberirc")).toString()
     }
 }
 
@@ -277,12 +289,13 @@ class LoginViewModelFactory(
     private val context: Context,
     private val api: SiteApi,
     private val stores: AccountStores,
+    private val deviceSettings: DeviceSettingsStore,
     private val deviceId: () -> String,
     private val notice: String? = null,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         val prefs = context.getSharedPreferences(LoginViewModel.APP_PREFS_FILE, Context.MODE_PRIVATE)
-        return LoginViewModel(api, stores, deviceId, prefs, notice) as T
+        return LoginViewModel(api, stores, deviceSettings, deviceId, prefs, notice) as T
     }
 }

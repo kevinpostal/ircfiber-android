@@ -17,7 +17,10 @@ import com.kevinpostal.fiberirc.BuildConfig
 import com.kevinpostal.fiberirc.data.api.SiteApi
 import com.kevinpostal.fiberirc.data.api.SiteApiError
 import com.kevinpostal.fiberirc.data.diagnostics.AppLog
+import com.kevinpostal.fiberirc.data.e2ee.E2eeExternalGate
+import com.kevinpostal.fiberirc.data.e2ee.E2eeExternalSend
 import com.kevinpostal.fiberirc.ui.shell.BufferKey
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -41,6 +44,7 @@ class PushRegistrar(context: Context, private val api: SiteApi) {
     private val context = context.applicationContext
     private val prefs = this.context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val external = E2eeExternalSend(this.context, api)
 
     @Volatile
     private var foreground = false
@@ -117,18 +121,41 @@ class PushRegistrar(context: Context, private val api: SiteApi) {
             .onFailure { AppLog.w(TAG, "push: unregister failed", it) }
     }
 
-    /**
-     * `POST /api/networks/<networkId>/messages`: the server sends [text] to [target] as the account, as a reply to
-     * [replyTo] when given (a notification's Reply action).
-     */
-    suspend fun sendReply(networkId: String, target: String, text: String, replyTo: String?): Result<Unit> {
-        val body = buildJsonObject {
-            put("target", target)
-            put("text", text)
-            if (!replyTo.isNullOrEmpty()) put("replyTo", replyTo)
-        }
-        return api.postJson(listOf("api", "networks", networkId, "messages"), body).map { }
+    /** A notification Reply's result: posted as plaintext, kept as a sealed pending draft, or neither. */
+    sealed interface ReplyOutcome {
+        data object Sent : ReplyOutcome
+
+        /** Not sendable as plaintext: sealed as draft [draftId] for an explicit Send in the app. */
+        data class Saved(val draftId: String) : ReplyOutcome
+
+        data class Failed(val error: Throwable) : ReplyOutcome
     }
+
+    /**
+     * A notification's Reply: `POST /api/networks/<networkId>/messages` (the server sends [text] to [target] as the
+     * account, as a reply to [replyTo] when given) only when [E2eeExternalSend.check] finds the target positively
+     * unencrypted; otherwise the text is sealed as a pending draft and never sent from here.
+     */
+    suspend fun reply(networkId: String, target: String, text: String, replyTo: String?): ReplyOutcome =
+        when (val gate = external.check(networkId, target)) {
+            is E2eeExternalGate.Plaintext -> external.postPlaintext(gate, text, replyTo)
+                .fold({ ReplyOutcome.Sent }, { ReplyOutcome.Failed(it) })
+            is E2eeExternalGate.ContinueInApp -> {
+                AppLog.i(TAG, "push: reply continues in the app (${gate.reason})")
+                val account = gate.account
+                if (account == null) {
+                    ReplyOutcome.Failed(IllegalStateException("no signed-in account to keep the reply for"))
+                } else {
+                    try {
+                        ReplyOutcome.Saved(external.saveDraft(account, networkId, target, text, replyTo).id)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        ReplyOutcome.Failed(e)
+                    }
+                }
+            }
+        }
 
     /** A push for [p] would land in the buffer the user is reading. */
     fun isShowing(p: PushPayload): Boolean =

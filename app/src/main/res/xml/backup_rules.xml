@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Android 11 and older Auto Backup. Keeps the install id (data/prefs/DeviceIdentity.kt) and the push state
-     (data/push/PushRegistrar.kt: FCM token, permission-asked flag) on this device only. -->
+     (data/push/PushRegistrar.kt: FCM token, permission-asked flag) on this device only. The encryption directory
+     (data/e2ee/E2eeStore.kt: files/e2ee/<account scope>/store.db with its -wal/-shm/-journal files, and the sealed
+     pending drafts under files/e2ee/drafts/) never leaves the device: its Keystore key can't follow it, and
+     restoring another device's MLS state would clone that device's identity. -->
 <full-backup-content>
     <exclude domain="sharedpref" path="fiberirc_device_identity.xml" />
     <exclude domain="sharedpref" path="fiberirc_push.xml" />
+    <exclude domain="file" path="e2ee/" />
 </full-backup-content>

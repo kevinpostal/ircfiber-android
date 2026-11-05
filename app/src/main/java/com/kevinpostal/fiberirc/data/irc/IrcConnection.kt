@@ -39,6 +39,13 @@ interface IrcTransport {
 
     /** Appends `\r\n`. Dropped unless connected. */
     fun send(line: String)
+
+    /** [send], reporting whether the connection accepted the line (false: nothing queued, not connected). */
+    fun trySend(line: String): Boolean {
+        send(line)
+        return true
+    }
+
     fun disconnect()
 }
 
@@ -205,9 +212,13 @@ class IrcConnection(
     }
 
     override fun send(line: String) {
-        val s = synchronized(lock) { session } ?: return
-        if (!s.ready) return
-        s.outgoing.trySend(line + "\r\n")
+        trySend(line)
+    }
+
+    override fun trySend(line: String): Boolean {
+        val s = synchronized(lock) { session } ?: return false
+        if (!s.ready) return false
+        return s.outgoing.trySend(line + "\r\n").isSuccess
     }
 
     override fun disconnect() {

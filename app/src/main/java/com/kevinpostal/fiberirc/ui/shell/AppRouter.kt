@@ -1,6 +1,7 @@
 package com.kevinpostal.fiberirc.ui.shell
 
 import android.content.Intent
+import com.kevinpostal.fiberirc.data.e2ee.E2eeDraftVault
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -57,9 +58,25 @@ object AppRouter {
         _pendingAuthRedirect.compareAndSet(uri, null)
     }
 
+    private val _pendingEncryptedDraft = MutableStateFlow<String?>(null)
+
+    /**
+     * The newest `fiberirc://encrypted-draft?id=<UUID>` continuation (a notification Reply or share the
+     * encryption policy kept from sending as plaintext) not yet taken by the session: the draft id of
+     * [com.kevinpostal.fiberirc.data.e2ee.E2eePendingDrafts]. The session loads it for its own account, shows it in
+     * its buffer for an explicit Send, then [consumeEncryptedDraft]s it. Never sent by the route itself.
+     */
+    val pendingEncryptedDraft: StateFlow<String?> = _pendingEncryptedDraft.asStateFlow()
+
+    /** The session took draft route [id]; a different, newer one stays pending. */
+    fun consumeEncryptedDraft(id: String) {
+        _pendingEncryptedDraft.compareAndSet(id, null)
+    }
+
     /**
      * `MainActivity.onCreate`/`onNewIntent`: an auth hand-off waits in [pendingAuthRedirect] for the login screen;
-     * a buffer, `irc(s)://` or App Link waits in [pending] for the session. Other intents are ignored.
+     * an encrypted-draft continuation in [pendingEncryptedDraft]; a buffer, `irc(s)://` or App Link waits in
+     * [pending] for the session. Other intents are ignored.
      */
     fun handle(intent: Intent?) {
         val uri = intent?.dataString ?: return
@@ -67,7 +84,28 @@ object AppRouter {
             _pendingAuthRedirect.value = uri
             return
         }
+        encryptedDraftId(uri)?.let {
+            _pendingEncryptedDraft.value = it
+            return
+        }
         parse(uri)?.let(::open)
+    }
+
+    /** The draft id of `fiberirc://encrypted-draft?id=<lower-case UUID>`, else null. */
+    fun encryptedDraftId(uri: String?): String? {
+        val u = uri?.let(::parseUri) ?: return null
+        if (!u.scheme.equals(SCHEME, ignoreCase = true) || !u.host.equals(ENCRYPTED_DRAFT_HOST, ignoreCase = true)) return null
+        if (!u.rawPath.isNullOrEmpty() && u.rawPath != "/") return null
+        val params = (u.rawQuery ?: return null).split('&')
+        if (params.size != 1 || !params[0].startsWith("id=")) return null
+        val id = params[0].removePrefix("id=")
+        return id.takeIf(E2eeDraftVault::isDraftId)
+    }
+
+    /** The continuation link [encryptedDraftId] reads (explicit intents to `MainActivity` only). */
+    fun encryptedDraftUri(id: String): String {
+        require(E2eeDraftVault.isDraftId(id)) { "not a draft id" }
+        return "$SCHEME://$ENCRYPTED_DRAFT_HOST?id=$id"
     }
 
     /** `fiberirc://auth?code=…`: the OAuth/app-login return, for `LoginViewModel.handleAuthRedirect`. */
@@ -107,6 +145,7 @@ object AppRouter {
         "$SCHEME://buffer/${WebBufferRoute.encodeComponent(networkId)}/${WebBufferRoute.encodeComponent(buffer)}"
 
     const val SCHEME = "fiberirc"
+    private const val ENCRYPTED_DRAFT_HOST = "encrypted-draft"
 }
 
 /**

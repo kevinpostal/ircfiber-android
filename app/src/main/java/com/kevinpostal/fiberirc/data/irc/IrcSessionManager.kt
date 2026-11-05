@@ -6,6 +6,14 @@ import com.kevinpostal.fiberirc.data.api.NetworkInfo
 import com.kevinpostal.fiberirc.data.api.SessionBootstrap
 import com.kevinpostal.fiberirc.data.api.SiteApi
 import com.kevinpostal.fiberirc.data.api.networks
+import com.kevinpostal.fiberirc.data.e2ee.E2eeBridgeException
+import com.kevinpostal.fiberirc.data.e2ee.E2eeIrcHost
+import com.kevinpostal.fiberirc.data.e2ee.E2eeNetworkEncryption
+import com.kevinpostal.fiberirc.data.e2ee.E2eeService
+import com.kevinpostal.fiberirc.data.e2ee.E2eeServiceObserver
+import com.kevinpostal.fiberirc.data.e2ee.E2eeServiceState
+import com.kevinpostal.fiberirc.data.e2ee.E2eeWireRequest
+import com.kevinpostal.fiberirc.data.e2ee.E2eeWireTransport
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.delay
@@ -15,6 +23,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.time.Duration
 import java.time.Instant
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 /**
  * The signed-in session's IRC connections: one [IrcClient] per network (the bouncer's networks, or the single
@@ -28,18 +42,28 @@ import java.time.Instant
  * Lifecycle: construct with the login's settings → [start] (connects) → [stop] (sign-out / back to login; the
  * manager is done afterwards).
  *
+ * Encryption: production sessions own the signed-in account's one [E2eeService] ([e2ee]), started and stopped
+ * with the session; the manager is its [E2eeIrcHost] (network/member context, WHO) and tells it about membership,
+ * nick and network changes. Every bouncer network's client gets [IrcEncryptionConfig.Encrypted] over that service
+ * (sends decided and encrypted, ciphertext decrypted, its `transport.sendWire` written by that client); a network
+ * without a site network id (direct IRC) is [IrcEncryptionConfig.Plaintext]. Test sessions (FakeTransport) pass
+ * no factory: their clients are explicitly plaintext.
+ *
  * @param clientId this install's `X-IRCFiber-Device` id, for [SessionBootstrap.bouncerSettings].
+ * @param makeClient builds one network's client with the encryption configuration the session chose for it.
  * @param showLogin replaces the session with the sign-in screen showing `notice` (rejected credentials).
+ * @param e2eeFactory builds the session's encryption service; null disables encryption (tests).
  */
 class IrcSessionManager(
     settings: List<ConnectionSettings>,
     private val api: SiteApi,
     private val clientId: () -> String,
-    private val makeClient: (ConnectionSettings) -> IrcClient,
+    private val makeClient: (ConnectionSettings, IrcEncryptionConfig) -> IrcClient,
     private val showLogin: (notice: String) -> Unit,
     private val scope: CoroutineScope = MainScope(),
     private val clock: () -> Instant = Instant::now,
-) : IrcClientListener {
+    e2eeFactory: ((IrcSessionManager) -> E2eeService)? = null,
+) : IrcClientListener, E2eeIrcHost {
     /** Production wiring: real sockets via [IrcClient.create]. */
     constructor(
         context: Context,
@@ -47,9 +71,25 @@ class IrcSessionManager(
         api: SiteApi,
         clientId: () -> String,
         showLogin: (notice: String) -> Unit,
-    ) : this(settings, api, clientId, { IrcClient.create(context.applicationContext, it) }, showLogin)
+        e2eeFactory: (IrcSessionManager) -> E2eeService,
+    ) : this(
+        settings,
+        api,
+        clientId,
+        { s, encryption -> IrcClient.create(context.applicationContext, s, encryption) },
+        showLogin,
+        e2eeFactory = e2eeFactory,
+    )
 
-    private val _clients = MutableStateFlow(settings.map(makeClient))
+    /**
+     * The signed-in account's encryption service (null in tests). Message paths reach its typed helpers through
+     * each client's [IrcEncryptionConfig]; without a running service encrypted sends fail, never fall back.
+     */
+    val e2ee: E2eeService? = e2eeFactory?.invoke(this)?.also { service ->
+        service.onSessionExpired = { leaveForLogin("Your sign-in has expired — sign in again.") }
+    }
+
+    private val _clients = MutableStateFlow(settings.map { makeClient(it, encryptionFor(it)) })
 
     /** One client per network, in the bouncer's order (managed networks first). */
     val clients: StateFlow<List<IrcClient>> = _clients.asStateFlow()
@@ -86,6 +126,10 @@ class IrcSessionManager(
 
     init {
         _clients.value.forEach { it.addObserver(this) }
+        e2ee?.let { service ->
+            service.wireTransport = E2eeWireTransport { request -> writeWire(request) }
+            service.addObserver(E2eeRelay())
+        }
     }
 
     val isTornDown: Boolean get() = tornDown
@@ -99,17 +143,19 @@ class IrcSessionManager(
         listeners.removeAll { it === l }
     }
 
-    /** Connects every client (once). */
+    /** Connects every client (once) and starts the session's encryption service. */
     fun start() {
         if (started || tornDown) return
         started = true
         _clients.value.forEach { it.connect() }
+        e2ee?.start()
     }
 
-    /** Leaving for the sign-in screen: stops observing and disconnects every client. Terminal. */
+    /** Leaving for the sign-in screen: stops observing, disconnects every client and stops encryption. Terminal. */
     fun stop() {
         if (tornDown) return
         tornDown = true
+        e2ee?.stop()
         _clients.value.forEach(::retire)
         listeners.clear()
     }
@@ -119,6 +165,7 @@ class IrcSessionManager(
         val c = _clients.value.firstOrNull { it.settings.networkId == networkId } ?: return
         retire(c)
         _clients.value = _clients.value.filterNot { it === c }
+        e2ee?.contextChanged()
         bump()
     }
 
@@ -138,6 +185,7 @@ class IrcSessionManager(
             val info = infos.firstOrNull { it.id == c.settings.networkId } ?: continue
             c.upstreamCaps = info.caps?.toSet() ?: emptySet()
         }
+        e2ee?.contextChanged()
         bump()
     }
 
@@ -153,7 +201,8 @@ class IrcSessionManager(
         val current = _clients.value
         val wanted = settings.mapTo(HashSet()) { it.networkId }
         val removed = current.filter { it.settings.networkId !in wanted }
-        val added = settings.filter { s -> current.none { it.settings.networkId == s.networkId } }.map(makeClient)
+        val added = settings.filter { s -> current.none { it.settings.networkId == s.networkId } }
+            .map { makeClient(it, encryptionFor(it)) }
         if (removed.isEmpty() && added.isEmpty()) return emptyList()
         removed.forEach(::retire)
         val all = current + added
@@ -163,6 +212,7 @@ class IrcSessionManager(
             configure(c)
         }
         if (started) added.forEach { it.connect() }
+        e2ee?.contextChanged()
         bump()
         return removed
     }
@@ -188,17 +238,29 @@ class IrcSessionManager(
 
     // region IrcClientListener (fan-out)
 
-    override fun onStateChanged(client: IrcClient, state: IrcState, error: Throwable?) =
+    override fun onStateChanged(client: IrcClient, state: IrcState, error: Throwable?) {
+        if (state == IrcState.CONNECTED) e2ee?.contextChanged()
         forward { it.onStateChanged(client, state, error) }
+    }
 
-    override fun onBufferAdded(client: IrcClient, buffer: IrcBuffer) = forward { it.onBufferAdded(client, buffer) }
+    override fun onBufferAdded(client: IrcClient, buffer: IrcBuffer) {
+        e2ee?.contextChanged()
+        forward { it.onBufferAdded(client, buffer) }
+    }
 
-    override fun onBufferRemoved(client: IrcClient, buffer: IrcBuffer) = forward { it.onBufferRemoved(client, buffer) }
+    override fun onBufferRemoved(client: IrcClient, buffer: IrcBuffer) {
+        e2ee?.contextChanged()
+        forward { it.onBufferRemoved(client, buffer) }
+    }
 
     override fun onLineAppended(client: IrcClient, buffer: IrcBuffer, line: IrcLine) =
         forward { it.onLineAppended(client, buffer, line) }
 
-    override fun onMembersUpdated(client: IrcClient, buffer: IrcBuffer) = forward { it.onMembersUpdated(client, buffer) }
+    /** Membership, nick and IRC account changes: the encryption audience follows them. */
+    override fun onMembersUpdated(client: IrcClient, buffer: IrcBuffer) {
+        e2ee?.contextChanged()
+        forward { it.onMembersUpdated(client, buffer) }
+    }
 
     override fun onBufferUpdated(client: IrcClient, buffer: IrcBuffer) = forward { it.onBufferUpdated(client, buffer) }
 
@@ -219,14 +281,140 @@ class IrcSessionManager(
     override fun onCredentialsRejected(client: IrcClient) {
         forward { it.onCredentialsRejected(client) }
         if (leavingForLogin) return   // every network's client reports the same rejection
-        leavingForLogin = true
         val now = clock()
         val repeated = lastCredentialRecovery?.let { Duration.between(it, now) < REPEAT_WINDOW } ?: false
         lastCredentialRecovery = now
+        leaveForLogin("Your sign-in is no longer valid — sign in again.", logout = repeated)
+    }
+
+    /** Once per session: to the login screen, which re-probes the site session (a live one reconnects). */
+    private fun leaveForLogin(notice: String, logout: Boolean = false) {
+        if (leavingForLogin || tornDown) return
+        leavingForLogin = true
         scope.launch {
-            if (repeated) api.logout()
-            showLogin("Your sign-in is no longer valid — sign in again.")
+            if (logout) api.logout()
+            showLogin(notice)
         }
+    }
+
+    // endregion
+
+    // region Encryption
+
+    /** Bouncer networks encrypt through the session's service; a network without a site id can't (direct IRC). */
+    private fun encryptionFor(s: ConnectionSettings): IrcEncryptionConfig {
+        val service = e2ee ?: return IrcEncryptionConfig.Plaintext
+        if (!s.viaBouncer || s.networkId.isEmpty()) return IrcEncryptionConfig.Plaintext
+        return IrcEncryptionConfig.Encrypted(E2eeNetworkEncryption(service, s.networkId))
+    }
+
+    private fun encryptedClients(): List<IrcClient> =
+        _clients.value.filter { it.encryption is IrcEncryptionConfig.Encrypted }
+
+    /** `transport.sendWire` onto that network's link: all accepted, nothing written, or uncertain (never retried). */
+    private fun writeWire(request: E2eeWireRequest) {
+        val c = encryptedClients().firstOrNull { it.settings.networkId == request.networkId }
+            ?: throw E2eeBridgeException("not_connected", "network not connected; nothing was sent")
+        when (c.sendWire(request.target, request.command, request.lines, request.tags, request.label)) {
+            IrcWireResult.SENT -> Unit
+            IrcWireResult.NOT_WRITTEN -> throw E2eeBridgeException("not_connected", "nothing was sent")
+            // The runtime chose plaintext for a target this device doesn't positively know to be off.
+            IrcWireResult.PLAINTEXT_REFUSED ->
+                throw E2eeBridgeException("plaintext_refused", "this target isn't known to be unencrypted; nothing was sent")
+            IrcWireResult.UNCERTAIN ->
+                throw E2eeBridgeException("uncertain_delivery", "the connection failed mid-send; delivery is uncertain")
+        }
+    }
+
+    /** The service's state, row results, resubmissions and plaintext invalidation, routed to the network clients. */
+    private inner class E2eeRelay : E2eeServiceObserver {
+        /** Whether the last running status carried a policy decision (decryption refuses rows without one). */
+        private var hadPolicy = false
+
+        override fun onState(state: E2eeServiceState) {
+            if (tornDown) return
+            encryptedClients().forEach { it.encryptionStateChanged() }
+            val policy = (state as? E2eeServiceState.Running)?.status?.policyAvailable == true
+            // Rows refused while no policy decision existed are read as soon as one does.
+            if (policy && !hadPolicy) encryptedClients().forEach { it.resubmitPendingEncrypted() }
+            hadPolicy = policy
+            bump()
+        }
+
+        override fun onReplaceRow(payload: JsonObject) {
+            if (tornDown) return
+            val networkId = (payload["networkId"] as? JsonPrimitive)?.content ?: return
+            val id = (payload["id"] as? JsonPrimitive)?.content ?: return
+            val message = payload["message"] as? JsonObject ?: return
+            val buffer = (payload["buffer"] as? JsonPrimitive)?.content
+            // The payload's stable id is authoritative; msgid stays the fallback.
+            val row = JsonObject(message + ("id" to JsonPrimitive(id)))
+            encryptedClients().firstOrNull { it.settings.networkId == networkId }?.applyReplaceRow(buffer, row)
+        }
+
+        override fun onResubmitPending() {
+            if (tornDown) return
+            encryptedClients().forEach { it.resubmitPendingEncrypted() }
+        }
+
+        override fun onPlaintextInvalidated() {
+            encryptedClients().forEach { it.dropPlaintext() }
+            bump()
+        }
+    }
+
+    // endregion
+
+    // region E2eeIrcHost
+
+    override fun e2eeNetworks(): JsonArray = buildJsonArray {
+        val infos = _networkInfos.value
+        for (c in _clients.value) {
+            val networkId = c.settings.networkId
+            // A direct-ircd session has no site network id: encryption is unavailable there.
+            if (networkId.isEmpty() || !c.settings.viaBouncer) continue
+            add(
+                buildJsonObject {
+                    put("networkId", networkId)
+                    // The upstream network's host (the bouncer's address isn't it); "" until /api/networks answers.
+                    put("host", infos.firstOrNull { it.id == networkId }?.host.orEmpty())
+                    put("nick", c.nick)
+                    c.hostmask?.let { put("hostmask", it) }
+                    if (c.isupport.isNotEmpty()) {
+                        put("isupport", JsonObject(c.isupport.mapValues { JsonPrimitive(it.value) }))
+                    }
+                    put(
+                        "members",
+                        JsonObject(
+                            c.buffers.filter { it.kind != IrcBufferKind.SERVER && it.members.isNotEmpty() }
+                                .associate { b -> b.name.lowercase() to JsonArray(b.members.map { memberJson(it) }) },
+                        ),
+                    )
+                },
+            )
+        }
+    }
+
+    override fun sendWho(networkId: String, channel: String): Boolean {
+        val c = _clients.value.firstOrNull { it.settings.networkId == networkId } ?: return false
+        return c.requestWhoAccounts(channel)
+    }
+
+    /** An `IrcMember` as the shared runtime's `Member` (account from the IRC account tag, never the nick). */
+    private fun memberJson(m: IrcMember): JsonObject = buildJsonObject {
+        val top = m.prefixes.maxByOrNull { PREFIX_RANK.indexOf(it).let { i -> if (i < 0) -1 else PREFIX_RANK.length - i } }
+        put("nick", m.nick)
+        put("prefix", top?.toString().orEmpty())
+        put("category", categoryOf(top))
+        put("ident", m.user)
+        put("host", m.host)
+        put("realname", m.realname)
+        put("isAway", m.away)
+        put("awayMessage", "")
+        put("lastSpoke", 0)
+        put("lastHighlighted", 0)
+        put("account", m.account)
+        put("isBot", false)
     }
 
     // endregion
@@ -237,6 +425,20 @@ class IrcSessionManager(
 
         /** When the last rejected-credentials recovery ran (process-wide, like the iOS static). */
         private var lastCredentialRecovery: Instant? = null
+
+        /** Status prefix chars, highest first (InspIRCd `PREFIX=(Yyqaohv)!*~&@%+`). */
+        private const val PREFIX_RANK = "!*~&@%+"
+
+        /** The web's `ModeCategory` of a member's highest prefix. */
+        private fun categoryOf(prefix: Char?): String = when (prefix) {
+            '!', '*' -> "OPER"
+            '~' -> "OWNER"
+            '&' -> "ADMIN"
+            '@' -> "OP"
+            '%' -> "HALFOP"
+            '+' -> "VOICED"
+            else -> "MEMBER"
+        }
 
         /** `networkId`, or the network name on the direct-ircd fallback (no id). */
         fun networkKey(c: IrcClient): String = c.settings.networkId.ifEmpty { c.settings.networkName }

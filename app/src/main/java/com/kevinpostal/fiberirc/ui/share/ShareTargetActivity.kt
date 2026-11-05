@@ -64,6 +64,10 @@ import com.kevinpostal.fiberirc.FiberIrcApp
 import com.kevinpostal.fiberirc.data.Deps
 import com.kevinpostal.fiberirc.data.api.CookieJarStore
 import com.kevinpostal.fiberirc.data.api.SiteApi
+import com.kevinpostal.fiberirc.data.e2ee.E2eeDraftContinuation
+import com.kevinpostal.fiberirc.data.e2ee.E2eeExternalAccount
+import com.kevinpostal.fiberirc.data.e2ee.E2eeExternalGate
+import com.kevinpostal.fiberirc.data.e2ee.E2eeExternalSend
 import com.kevinpostal.fiberirc.data.diagnostics.AppLog as Log
 import com.kevinpostal.fiberirc.data.media.FileTooLarge
 import com.kevinpostal.fiberirc.data.media.MediaApi
@@ -80,8 +84,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 import java.io.File
 
 /** A shared file, copied into the cache dir (the sender's grant on the Uri ends with this activity). */
@@ -121,9 +123,12 @@ internal object ShareForm {
 /**
  * IRC Fiber in the system share sheet (ports `FiberIRCShare/ShareViewController.swift`): shared text, a link, or one
  * photo, video or file goes to a channel or conversation. The file is uploaded to ircfiber.com (POST /api/upload) and
- * its link sent after the message (POST /api/networks/<id>/messages). The buffers are the ones the app published
- * ([ShareTargetsStore], pinned and recent first); a conversation the share sheet's Direct Share row picked
- * ([ShortcutManagerCompat.EXTRA_SHORTCUT_ID] / [Intent.EXTRA_LOCUS_ID]) is preselected, else the first target.
+ * its link sent after the message (POST /api/networks/<id>/messages) — only for a target [E2eeExternalSend.check]
+ * finds positively unencrypted. Any other target gets a sealed pending draft (the upload's link plus the text) that
+ * this sheet hands to the main app ([E2eeDraftContinuation]) for an explicit, encrypted Send. The buffers are the
+ * ones the app published ([ShareTargetsStore], pinned and recent first); a conversation the share sheet's Direct
+ * Share row picked ([ShortcutManagerCompat.EXTRA_SHORTCUT_ID] / [Intent.EXTRA_LOCUS_ID]) is preselected, else the
+ * first target.
  *
  * `ACTION_SEND` (plain text, images, videos, any file) and `ACTION_SEND_MULTIPLE` (only the first attachment:
  * iOS takes at most one file). Same process as the app, so it uses the app's [Deps] graph: the shared cookie jar
@@ -137,7 +142,19 @@ class ShareTargetActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val deps = (application as FiberIrcApp).deps
-        share = ShareSheetController(this, deps.api, deps.media, deps.shareTargets.targets, lifecycleScope) { sent ->
+        share = ShareSheetController(
+            this,
+            deps.media,
+            E2eeExternalSend(this, deps.api),
+            deps.shareTargets.targets,
+            lifecycleScope,
+            continueInApp = { draftId ->
+                // A foreground activity may start the app: the draft opens in its buffer for an explicit Send.
+                startActivity(E2eeDraftContinuation.intent(this, draftId))
+                setResult(RESULT_OK)
+                finish()
+            },
+        ) { sent ->
             setResult(if (sent) RESULT_OK else RESULT_CANCELED)
             finish()
         }
@@ -157,15 +174,17 @@ class ShareTargetActivity : ComponentActivity() {
 
 /**
  * The share form's state, input and Post, owned by [ShareTargetActivity] (its [scope] is the activity's lifecycle
- * scope) but independent of it, so [ShareSheet] runs over any [SiteApi]/[MediaApi]/targets wiring. [finish] ends the
- * sheet: `true` once the message is posted, `false` on Cancel.
+ * scope) but independent of it, so [ShareSheet] runs over any [E2eeExternalSend]/[MediaApi]/targets wiring. [finish]
+ * ends the sheet: `true` once the message is posted, `false` on Cancel. [continueInApp] ends it with a sealed pending
+ * draft the app must show for an explicit Send (an encrypted, pending or unknown target).
  */
 internal class ShareSheetController(
     private val context: Context,
-    private val api: SiteApi,
     private val media: MediaApi,
+    private val external: E2eeExternalSend,
     val targets: StateFlow<List<ShareTarget>>,
     private val scope: CoroutineScope,
+    private val continueInApp: (draftId: String) -> Unit,
     private val finish: (sent: Boolean) -> Unit,
 ) {
     var selected by mutableStateOf<ShareTarget?>(null)
@@ -180,6 +199,11 @@ internal class ShareSheetController(
     var sending by mutableStateOf(false)
         private set
     var sendError by mutableStateOf<String?>(null)
+
+    /** Asking before uploading a file for a target that may be encrypted: only its link would be encrypted. */
+    var uploadDisclosure by mutableStateOf(false)
+        private set
+    private var uploadDisclosed = false
 
     /** The cache-dir copy, set on the IO thread as soon as it exists; deleted by whichever of the copy and
      * [dispose] sees the other second (both volatile, so at least one of them does). */
@@ -264,6 +288,12 @@ internal class ShareSheetController(
 
     // region Send
 
+    private sealed interface Outcome {
+        data object Posted : Outcome
+        data class Saved(val draftId: String) : Outcome
+        data object NeedsUploadDisclosure : Outcome
+    }
+
     fun send() {
         val target = selected ?: return
         if (sending) return
@@ -272,9 +302,21 @@ internal class ShareSheetController(
         val shared = file
         scope.launch {
             val result = post(target, text, shared)
-            result.onSuccess {
-                shared?.file?.delete()
-                finish(true)
+            result.onSuccess { outcome ->
+                when (outcome) {
+                    Outcome.Posted -> {
+                        shared?.file?.delete()
+                        finish(true)
+                    }
+                    is Outcome.Saved -> {
+                        shared?.file?.delete()
+                        continueInApp(outcome.draftId)
+                    }
+                    Outcome.NeedsUploadDisclosure -> {
+                        sending = false
+                        uploadDisclosure = true
+                    }
+                }
             }.onFailure {
                 sending = false
                 sendError = it.message ?: "Something went wrong."
@@ -282,21 +324,47 @@ internal class ShareSheetController(
         }
     }
 
-    /** Upload (if any) then POST /api/networks/<id>/messages `{"target","text"}`. */
-    private suspend fun post(target: ShareTarget, message: String, shared: SharedFile?): Result<Unit> {
+    /** The user accepted that the file itself is uploaded without end-to-end encryption: upload and continue. */
+    fun confirmUploadDisclosure() {
+        uploadDisclosure = false
+        uploadDisclosed = true
+        send()
+    }
+
+    fun dismissUploadDisclosure() {
+        uploadDisclosure = false
+    }
+
+    /**
+     * Checks the target first. Positively unencrypted: upload (if any) then POST /api/networks/<id>/messages
+     * `{"target","text"}`. Otherwise (after the upload disclosure, for a file): upload, then seal the text and link
+     * as a pending draft — nothing is posted.
+     */
+    private suspend fun post(target: ShareTarget, message: String, shared: SharedFile?): Result<Outcome> {
+        val gate = external.check(target.networkId, target.buffer)
+        var draftAccount: E2eeExternalAccount? = null
+        if (gate is E2eeExternalGate.ContinueInApp) {
+            Log.i(TAG, "share continues in the app (${gate.reason})")
+            draftAccount = gate.account ?: return Result.failure(IllegalStateException("Open IRC Fiber and sign in first."))
+            if (shared != null && !uploadDisclosed) return Result.success(Outcome.NeedsUploadDisclosure)
+        }
         var text = message
         if (shared != null) {
             val upload = media.upload(shared.file, shared.name, shared.mime, target.networkId, target.buffer)
                 .getOrElse { return Result.failure(it) }
             text = UploadFile.message(text, upload.url)
         }
-        return api.postJson(
-            listOf("api", "networks", target.networkId, "messages"),
-            buildJsonObject {
-                put("target", target.buffer)
-                put("text", text)
-            },
-        ).map { }
+        if (gate is E2eeExternalGate.Plaintext) {
+            return external.postPlaintext(gate, text, replyTo = null).map { Outcome.Posted }
+        }
+        return try {
+            Result.success(Outcome.Saved(external.saveDraft(checkNotNull(draftAccount), target.networkId, target.buffer, text, null).id))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "Couldn't save the share draft: ${e.javaClass.simpleName}")
+            Result.failure(IllegalStateException("Couldn't save the message securely."))
+        }
     }
 
     fun cancel() = finish(false)
@@ -432,6 +500,21 @@ internal fun ShareSheet(share: ShareSheetController) {
             title = { Text("Couldn't send") },
             text = { Text(error) },
             confirmButton = { TextButton(onClick = { share.sendError = null }) { Text("OK") } },
+        )
+    }
+    if (share.uploadDisclosure) {
+        AlertDialog(
+            onDismissRequest = share::dismissUploadDisclosure,
+            title = { Text("The file isn't end-to-end encrypted") },
+            text = {
+                Text(
+                    "This conversation may be end-to-end encrypted. Only your message and the file's link will be " +
+                        "encrypted — the file itself is uploaded to ircfiber.com without end-to-end encryption. " +
+                        "IRC Fiber then opens so you can send it.",
+                )
+            },
+            confirmButton = { TextButton(onClick = share::confirmUploadDisclosure) { Text("Upload") } },
+            dismissButton = { TextButton(onClick = share::dismissUploadDisclosure) { Text("Cancel") } },
         )
     }
 }

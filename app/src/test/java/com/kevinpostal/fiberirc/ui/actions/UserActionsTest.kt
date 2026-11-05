@@ -3,6 +3,7 @@ package com.kevinpostal.fiberirc.ui.actions
 import com.kevinpostal.fiberirc.data.irc.AppForegroundMonitoring
 import com.kevinpostal.fiberirc.data.irc.ConnectionEvent
 import com.kevinpostal.fiberirc.data.irc.ConnectionSettings
+import com.kevinpostal.fiberirc.data.irc.IrcEncryptionConfig
 import com.kevinpostal.fiberirc.data.irc.IrcBuffer
 import com.kevinpostal.fiberirc.data.irc.IrcBufferKind
 import com.kevinpostal.fiberirc.data.irc.IrcClient
@@ -58,7 +59,7 @@ class UserActionsTest {
     private val t = RecordingTransport()
     private val client = IrcClient(
         ConnectionSettings(nick = "me", realName = "", autoJoinChannels = ""),
-        t, StillPath, Foreground, UnconfinedTestDispatcher(),
+        t, StillPath, Foreground, UnconfinedTestDispatcher(), encryption = IrcEncryptionConfig.Plaintext,
     )
     private val channel = IrcBuffer("#chan", IrcBufferKind.CHANNEL)
 

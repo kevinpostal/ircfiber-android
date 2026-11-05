@@ -9,6 +9,7 @@ import androidx.compose.material.icons.filled.ClearAll
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.PanTool
 import androidx.compose.material.icons.filled.Report
@@ -30,6 +31,8 @@ import com.kevinpostal.fiberirc.data.irc.IrcClient
 import com.kevinpostal.fiberirc.data.irc.IrcFormatting
 import com.kevinpostal.fiberirc.data.irc.IrcLine
 import com.kevinpostal.fiberirc.data.irc.IrcLineKind
+import com.kevinpostal.fiberirc.data.irc.IrcSendState
+import com.kevinpostal.fiberirc.ui.chat.EncryptedRowText
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -39,7 +42,10 @@ import kotlinx.serialization.json.put
  * `BufferViewController`'s `menuAction`/`confirmDeleteMessage`/`confirmClearBacklog` for what they do).
  */
 object MessageMenu {
-    enum class Item { COPY_URL, SHARE_URL, CLOSE_PREVIEW, COPY_MESSAGE, REPLY, EDIT_MESSAGE, DELETE_MESSAGE, REPORT, BLOCK, CLEAR_BACKLOG }
+    enum class Item {
+        RETRY_SEND, DISCARD_SEND,
+        COPY_URL, SHARE_URL, CLOSE_PREVIEW, COPY_MESSAGE, REPLY, EDIT_MESSAGE, DELETE_MESSAGE, REPORT, BLOCK, CLEAR_BACKLOG,
+    }
 
     /** The server's name for a network's server buffer in [clearBacklog]. */
     const val SERVER_BUFFER_NAME = "_server"
@@ -47,6 +53,7 @@ object MessageMenu {
     /**
      * `onURL`: the press is on a URL in the line; `preview`: on one of its inline previews (its URL, and Close
      * Preview). `clearBacklog`: the buffer's network belongs to the account (the site clears its history).
+     * `heldSend`: the line is your own send still held for its lock decision ([IrcClient.isHeldSend]).
      */
     fun items(
         line: IrcLine,
@@ -55,8 +62,18 @@ object MessageMenu {
         preview: Boolean = false,
         features: ClientTagFeatures,
         clearBacklog: Boolean,
+        heldSend: Boolean = false,
     ): List<Item> {
         val items = ArrayList<Item>()
+        // Your own encrypted send that didn't (certainly) go out: retry with fresh ciphertext, or let it go. An
+        // uncertain one is never offered a retry (it may already have been delivered); one still held for its lock
+        // decision can be dropped.
+        when (line.send) {
+            is IrcSendState.Failed -> items += listOf(Item.RETRY_SEND, Item.DISCARD_SEND)
+            is IrcSendState.Uncertain -> items += Item.DISCARD_SEND
+            IrcSendState.Sending -> if (heldSend) items += Item.DISCARD_SEND
+            null -> Unit
+        }
         if (preview) {
             items += listOf(Item.COPY_URL, Item.SHARE_URL, Item.CLOSE_PREVIEW)
         } else if (onURL) {
@@ -139,10 +156,19 @@ fun MessageMenuHost(
                 preview = preview,
                 features = client.clientTagFeatures,
                 clearBacklog = networkId.isNotEmpty(),
+                heldSend = client.isHeldSend(line),
             )
             val nick = line.sender.orEmpty()
             val actions = items.mapNotNull { item ->
                 when (item) {
+                    MessageMenu.Item.RETRY_SEND -> SheetAction("Retry Sending", icon = Icons.Filled.Refresh) {
+                        client.retryEncryptedSend(line, buffer)
+                    }
+                    MessageMenu.Item.DISCARD_SEND -> SheetAction(
+                        if (line.send is IrcSendState.Uncertain) "Dismiss" else "Discard Message",
+                        destructive = true,
+                        icon = Icons.Filled.Delete,
+                    ) { client.discardEncryptedSend(line, buffer) }
                     MessageMenu.Item.COPY_URL -> url?.let {
                         SheetAction("Copy URL", icon = Icons.Filled.Link) { copyText(context, "URL", it) }
                     }
@@ -178,7 +204,8 @@ fun MessageMenuHost(
                 }
             }
             ActionSheet(
-                title = null,
+                // An encrypted row says how it was protected and who the runtime says sent it.
+                title = EncryptedRowText.details(line),
                 subtitle = null,
                 actions = actions,
                 // A row that moved on to a confirmation has already replaced `step`.

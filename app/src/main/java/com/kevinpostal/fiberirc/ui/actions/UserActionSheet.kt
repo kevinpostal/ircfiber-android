@@ -71,6 +71,7 @@ fun UserActionsHost(
     onWhois: (client: IrcClient, nick: String) -> Unit,
     onSendMessage: ((client: IrcClient, nick: String) -> Unit)?,
     onMention: ((nick: String) -> Unit)?,
+    onEncryption: ((client: IrcClient, nick: String) -> Unit)? = null,
 ) {
     val target = state.target ?: return
     val (member, channel, client) = target
@@ -96,6 +97,7 @@ fun UserActionsHost(
                 onKick = { state.step = UserActionsState.Step.Kick },
                 onBan = { mask -> state.step = UserActionsState.Step.Ban(mask) },
                 onCopyHostmask = { copyText(context, "Hostmask", it) },
+                onEncryption = onEncryption?.let { f -> { state.dismiss(); f(client, nick) } },
             )
             ActionSheet(
                 title = if (hostmask != null) member.realname.ifEmpty { nick } else nick,
@@ -148,12 +150,16 @@ internal fun userActions(
     onKick: () -> Unit,
     onBan: (mask: String) -> Unit,
     onCopyHostmask: (String) -> Unit,
+    onEncryption: (() -> Unit)? = null,
 ): List<SheetAction> {
     val nick = member.nick
     val out = ArrayList<SheetAction>()
     out += SheetAction("Whois", onClick = onWhois)
     if (onSendMessage != null) out += SheetAction("Send a Message", onClick = onSendMessage)
     if (onMention != null) out += SheetAction("Mention", onClick = onMention)
+    if (onEncryption != null && !nick.equals(client.nick, ignoreCase = true)) {
+        out += SheetAction("Encryption & Safety Number", onClick = onEncryption)
+    }
     val others = client.buffers.filter { it.kind == IrcBufferKind.CHANNEL && it.joined && it !== channel }
     if (others.isNotEmpty()) out += SheetAction("Invite to Channel…") { onInvite(others) }
     if (!nick.equals(client.nick, ignoreCase = true)) {

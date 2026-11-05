@@ -77,6 +77,8 @@ fun MembersDrawer(
     onSendMessage: ((client: IrcClient, nick: String) -> Unit)?,
     onMention: ((nick: String) -> Unit)?,
     modifier: Modifier = Modifier,
+    /** A member's conversation encryption: safety number, credentials, OpenPGP key (encrypting networks only). */
+    onEncryption: ((client: IrcClient, nick: String) -> Unit)? = null,
 ) {
     val c = LocalFiberIrcColors.current
     val channel = buffer?.takeIf { it.kind == IrcBufferKind.CHANNEL }
@@ -146,5 +148,5 @@ fun MembersDrawer(
         }
     }
 
-    UserActionsHost(users, moderation, onWhois, onSendMessage, onMention)
+    UserActionsHost(users, moderation, onWhois, onSendMessage, onMention, onEncryption)
 }

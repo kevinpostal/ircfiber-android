@@ -44,6 +44,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Passkey sheets (encryption backup/unlock) present over this activity; released on its destroy.
+        deps.passkeys.attach(this)
         // A recreated activity's launch intent was already handled.
         if (savedInstanceState == null) AppRouter.handle(intent)
         setContent { FiberIrcRoot(deps) }
@@ -106,7 +108,10 @@ private fun FiberIrcRoot(deps: Deps) {
                 is AppViewModel.Screen.Session -> {
                     val context = LocalContext.current
                     val actions = remember(screen) {
-                        SessionActions(context, deps.api, deps.accountStores, deps.push::unregister, app::showLogin)
+                        SessionActions(
+                            context, deps.api, deps.accountStores, deps.push::unregister, app::showLogin,
+                            e2ee = screen.manager.e2ee,
+                        )
                     }
                     SessionHost(deps, screen.manager, actions)
                 }
@@ -124,7 +129,7 @@ private fun Login(deps: Deps, screen: AppViewModel.Screen.Login, onSession: (Lis
     val context = LocalContext.current
     val login: LoginViewModel = viewModel(
         key = "login-${screen.generation}",
-        factory = LoginViewModelFactory(context, deps.api, deps.accountStores, { deps.deviceIdentity.id }, screen.notice),
+        factory = LoginViewModelFactory(context, deps.api, deps.accountStores, deps.deviceSettings, { deps.deviceIdentity.id }, screen.notice),
     )
     val authRedirect by AppRouter.pendingAuthRedirect.collectAsStateWithLifecycle()
     LaunchedEffect(login, authRedirect) {

@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -108,6 +109,7 @@ fun ModerationDialogs(controller: ModerationController) {
         )
         is ModerationController.Dialog.Report -> ReportMessageDialog(
             nick = d.nick,
+            encrypted = d.line.e2e != null,
             onReport = { note -> controller.submitReport(d, note) },
             onDismiss = controller::dismiss,
         )
@@ -131,9 +133,12 @@ fun ConfirmBlockDialog(nick: String, onBlock: () -> Unit, onDismiss: () -> Unit)
     )
 }
 
-/** "Report Message" with an optional "Details (optional)" note; [onReport] gets the note trimmed. */
+/**
+ * "Report Message" with an optional "Details (optional)" note; [onReport] gets the note trimmed. [encrypted]: the
+ * message was end-to-end encrypted, so the dialog says that reporting uploads its decrypted text before it does.
+ */
 @Composable
-fun ReportMessageDialog(nick: String, onReport: (note: String) -> Unit, onDismiss: () -> Unit) {
+fun ReportMessageDialog(nick: String, onReport: (note: String) -> Unit, onDismiss: () -> Unit, encrypted: Boolean = false) {
     var note by rememberSaveable { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -141,6 +146,14 @@ fun ReportMessageDialog(nick: String, onReport: (note: String) -> Unit, onDismis
         text = {
             Column {
                 Text(Moderation.reportPrompt(nick))
+                if (encrypted) {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "This message was end-to-end encrypted. Reporting sends its decrypted text to the ircfiber.com " +
+                            "moderators.",
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
                 Spacer(Modifier.height(12.dp))
                 OutlinedTextField(
                     value = note,
@@ -150,7 +163,7 @@ fun ReportMessageDialog(nick: String, onReport: (note: String) -> Unit, onDismis
                 )
             }
         },
-        confirmButton = { DestructiveButton("Report") { onReport(note.trim()) } },
+        confirmButton = { DestructiveButton(if (encrypted) "Report Decrypted Text" else "Report") { onReport(note.trim()) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }

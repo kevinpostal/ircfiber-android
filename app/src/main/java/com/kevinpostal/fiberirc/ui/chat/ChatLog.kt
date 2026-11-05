@@ -52,8 +52,8 @@ private val NEAR_BOTTOM = 40.dp
  * - Sticks to the bottom while the user is there; new rows arriving while scrolled up are counted into the bottom bar
  *   (mentions of [ChatRowStyle.ownNick] / highlight words separately), your own lines aren't.
  * - The top bar shows while the "New messages" row is above the screen, until ✕ ([onMarkRead]).
- * - [onNearTop] fires whenever the list comes within 600dp of the top (and again when [header] changes while there):
- *   call `IrcClient.requestOlderHistory(buffer)` from it.
+ * - [onNearTop] fires whenever the list comes within 600dp of the top (and again when [header] changes or
+ *   [canPage] becomes true while there): call `IrcClient.requestOlderHistory(buffer)` from it.
  * - [flashKey]: the [ChatRow.anchorKey] of a line to flash (a search result scrolled to); clear it and set it again
  *   to flash twice.
  * - [mediaContent] draws an inline preview (`ui.media.InlineMediaCard`) at [Dp] text width; the band, mention bar
@@ -66,6 +66,7 @@ fun ChatLog(
     style: ChatRowStyle,
     callbacks: ChatRowCallbacks,
     header: HistoryHeaderState,
+    canPage: Boolean,
     modifier: Modifier = Modifier,
     state: LazyListState = rememberLazyListState(),
     flashKey: String? = null,
@@ -113,8 +114,8 @@ fun ChatLog(
             }
         }
     }
-    LaunchedEffect(state, header) {
-        snapshotFlow { isNearTop }.distinctUntilChanged().filter { it }.collect { currentNearTop() }
+    LaunchedEffect(state, header, canPage) {
+        if (canPage) snapshotFlow { isNearTop }.distinctUntilChanged().filter { it }.collect { currentNearTop() }
     }
 
     // Follow appends: to the bottom when stuck there, else count them for the bottom bar.

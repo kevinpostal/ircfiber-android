@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.builtins.ListSerializer
+import kotlin.math.roundToInt
 
 /**
  * Settings that stay on this phone, never synced (ports `DeviceSettings.swift`): message layout, chat & embeds,
@@ -50,15 +51,12 @@ data class DeviceSettings(
     val askToPostSnippet: Boolean = true,
     val imagesInBrowser: Boolean = false,
     val videosInBrowser: Boolean = false,
-    /** Chat text size multiplier within [CHAT_FONT_SCALE_RANGE]. */
-    val chatFontScale: Double = 1.0,
     // Photo sharing
     val saveToCameraRoll: Boolean = true,
     /** Longest side of a shared photo in pixels; 0 sends the original. */
     val photoMaxDimension: Int = 1024,
 ) {
     companion object {
-        val CHAT_FONT_SCALE_RANGE = 0.8..1.4
         const val MAX_RECENTS = 8
     }
 }
@@ -70,7 +68,7 @@ class DeviceSettingsStore(private val prefs: SharedPreferences) {
     private val _settings = MutableStateFlow(read())
     val settings: StateFlow<DeviceSettings> = _settings.asStateFlow()
 
-    /** Applies [change] (clamping scale, dimension and recents) and saves it. */
+    /** Applies [change] (clamping dimension and recents) and saves it. */
     fun update(change: (DeviceSettings) -> DeviceSettings) {
         val next = normalized(change(_settings.value))
         if (next == _settings.value) return
@@ -79,10 +77,17 @@ class DeviceSettingsStore(private val prefs: SharedPreferences) {
     }
 
     private fun normalized(s: DeviceSettings) = s.copy(
-        chatFontScale = s.chatFontScale.coerceIn(DeviceSettings.CHAT_FONT_SCALE_RANGE),
         photoMaxDimension = s.photoMaxDimension.coerceAtLeast(0),
         composeStyleRecents = s.composeStyleRecents.take(DeviceSettings.MAX_RECENTS),
     )
+
+    /** The pre-sync local Font Size (`device.chatFontScale`, a Double string), removed on read; null when absent or 100%. */
+    fun takeLegacyChatScalePct(): Int? {
+        val raw = prefs.getString(key("chatFontScale"), null) ?: return null
+        prefs.edit().remove(key("chatFontScale")).apply()
+        val pct = ((raw.toDoubleOrNull() ?: return null) * 10).roundToInt() * 10
+        return pct.takeIf { it != 100 && it in DisplayPrefs.CHAT_SCALE_PCT_RANGE }
+    }
 
     private fun read(): DeviceSettings {
         val d = DeviceSettings()
@@ -114,7 +119,6 @@ class DeviceSettingsStore(private val prefs: SharedPreferences) {
                 askToPostSnippet = b("askToPostSnippet", d.askToPostSnippet),
                 imagesInBrowser = b("imagesInBrowser", d.imagesInBrowser),
                 videosInBrowser = b("videosInBrowser", d.videosInBrowser),
-                chatFontScale = prefs.getString(key("chatFontScale"), null)?.toDoubleOrNull() ?: d.chatFontScale,
                 saveToCameraRoll = b("saveToCameraRoll", d.saveToCameraRoll),
                 photoMaxDimension = if (prefs.contains(key("photoMaxDimension"))) prefs.getInt(key("photoMaxDimension"), d.photoMaxDimension) else d.photoMaxDimension,
             ),
@@ -149,7 +153,6 @@ class DeviceSettingsStore(private val prefs: SharedPreferences) {
         b("askToPostSnippet", s.askToPostSnippet)
         b("imagesInBrowser", s.imagesInBrowser)
         b("videosInBrowser", s.videosInBrowser)
-        e.putString(key("chatFontScale"), s.chatFontScale.toString())
         b("saveToCameraRoll", s.saveToCameraRoll)
         e.putInt(key("photoMaxDimension"), s.photoMaxDimension)
         e.apply()

@@ -11,6 +11,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonDecoder
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonEncoder
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -39,9 +40,10 @@ data class Me(
     /** Network id → collapsed (only `true` entries are meaningful). */
     val collapsed: Map<String, Boolean>? = null,
     val networkOrder: List<String>? = null,
-    /** Lenient like `BufferPrefsPayload`: non-bool values, non-object entries and empty maps drop out. */
+    /** Lenient like `BufferPrefsPayload`: values that are neither boolean nor string, non-object entries and empty
+     *  maps drop out. */
     @Serializable(with = LenientBufferPrefsSerializer::class)
-    val bufferPrefs: Map<String, Map<String, Boolean>>? = null,
+    val bufferPrefs: Map<String, Map<String, BufferPrefValue>>? = null,
     val showMemberPrefixes: Boolean? = null,
     val notificationSound: Boolean? = null,
     val muteAll: Boolean? = null,
@@ -54,32 +56,60 @@ data class Me(
     val notificationPolicy: NotificationPolicyView? = null,
 )
 
-/** `prefs.bufferPrefs`: a value that isn't a boolean, or an entry that isn't an object, decodes as absent. */
-object LenientBufferPrefsSerializer : KSerializer<Map<String, Map<String, Boolean>>> {
+/**
+ * One `prefs.bufferPrefs` value: the web stores booleans (`mute`, `typing`, `e2ee`, …) and strings (`e2eeMode`).
+ * Both survive a round trip, so a key this app doesn't know is never dropped from the account.
+ */
+sealed interface BufferPrefValue {
+    data class Bool(val value: Boolean) : BufferPrefValue
+
+    data class Text(val value: String) : BufferPrefValue
+
+    /** The boolean, or null for a string value. */
+    val bool: Boolean? get() = (this as? Bool)?.value
+
+    /** The string, or null for a boolean value. */
+    val text: String? get() = (this as? Text)?.value
+
+    fun toJson(): JsonPrimitive = when (this) {
+        is Bool -> JsonPrimitive(value)
+        is Text -> JsonPrimitive(value)
+    }
+
+    companion object {
+        /** A JSON boolean or string; null for every other JSON type (the existing lossy handling). */
+        fun of(element: JsonElement): BufferPrefValue? {
+            val p = element as? JsonPrimitive ?: return null
+            if (p is JsonNull) return null
+            if (p.isString) return Text(p.content)
+            return p.booleanOrNull?.let(::Bool)
+        }
+    }
+}
+
+/** `prefs.bufferPrefs`: a value that is neither a boolean nor a string, or an entry that isn't an object, decodes as
+ *  absent. The on-disk cache uses the same shape (an older boolean-only cache decodes unchanged). */
+object LenientBufferPrefsSerializer : KSerializer<Map<String, Map<String, BufferPrefValue>>> {
     override val descriptor: SerialDescriptor = JsonElement.serializer().descriptor
 
-    override fun deserialize(decoder: Decoder): Map<String, Map<String, Boolean>> {
+    override fun deserialize(decoder: Decoder): Map<String, Map<String, BufferPrefValue>> {
         val element = (decoder as? JsonDecoder)?.decodeJsonElement() ?: return emptyMap()
         return lenientBufferPrefs(element)
     }
 
-    override fun serialize(encoder: Encoder, value: Map<String, Map<String, Boolean>>) {
-        val json = JsonObject(value.mapValues { (_, prefs) -> JsonObject(prefs.mapValues { JsonPrimitive(it.value) }) })
+    override fun serialize(encoder: Encoder, value: Map<String, Map<String, BufferPrefValue>>) {
+        val json = JsonObject(value.mapValues { (_, prefs) -> JsonObject(prefs.mapValues { it.value.toJson() }) })
         (encoder as JsonEncoder).encodeJsonElement(json)
     }
 }
 
-fun lenientBufferPrefs(element: JsonElement): Map<String, Map<String, Boolean>> {
+fun lenientBufferPrefs(element: JsonElement): Map<String, Map<String, BufferPrefValue>> {
     val root = element as? JsonObject ?: return emptyMap()
-    val out = LinkedHashMap<String, Map<String, Boolean>>()
+    val out = LinkedHashMap<String, Map<String, BufferPrefValue>>()
     for ((key, entry) in root) {
         val obj = entry as? JsonObject ?: continue
-        val prefs = LinkedHashMap<String, Boolean>()
-        for ((name, v) in obj) {
-            val p = v as? JsonPrimitive ?: continue
-            if (p.isString) continue
-            p.booleanOrNull?.let { prefs[name] = it }
-        }
+        val prefs = LinkedHashMap<String, BufferPrefValue>()
+        for ((name, v) in obj) BufferPrefValue.of(v)?.let { prefs[name] = it }
         if (prefs.isNotEmpty()) out[key] = prefs
     }
     return out

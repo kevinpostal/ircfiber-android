@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.BorderColor
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PanTool
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.PrivacyTip
@@ -65,6 +66,8 @@ import com.kevinpostal.fiberirc.data.prefs.DisplaySettingsStore
 import com.kevinpostal.fiberirc.data.prefs.NotificationPolicyStore
 import com.kevinpostal.fiberirc.data.prefs.NotificationPrefsStore
 import com.kevinpostal.fiberirc.ui.shell.SessionActions
+import com.kevinpostal.fiberirc.ui.encryption.EncryptionSettingsScreen
+import com.kevinpostal.fiberirc.data.e2ee.E2eeServiceState
 import com.kevinpostal.fiberirc.ui.theme.Appearance
 import com.kevinpostal.fiberirc.ui.theme.Brand
 import com.kevinpostal.fiberirc.ui.theme.FiberIrcColors
@@ -75,7 +78,7 @@ import kotlinx.coroutines.launch
 import java.text.Normalizer
 
 /** Every Settings screen, for [SettingsFlow]'s back stack. */
-enum class SettingsRoute { ROOT, ACCOUNT, CHANGE_PASSWORD, SESSIONS, BOUNCER, THIS_DEVICE, DISPLAY, NOTIFICATIONS, HIGHLIGHTS, BLOCKED }
+enum class SettingsRoute { ROOT, ACCOUNT, CHANGE_PASSWORD, SESSIONS, BOUNCER, THIS_DEVICE, DISPLAY, NOTIFICATIONS, HIGHLIGHTS, BLOCKED, ENCRYPTION }
 
 /**
  * Gear → Settings as one self-contained flow: the root list and every screen it pushes, with Back popping
@@ -94,8 +97,10 @@ fun SettingsFlow(
     blockList: BlockListStore,
     sessionActions: SessionActions,
     onClose: () -> Unit,
+    /** The first screen: Settings' root, or one screen pushed over it (Back still returns to the root). */
+    start: SettingsRoute = SettingsRoute.ROOT,
 ) {
-    var stack by rememberSaveable { mutableStateOf(listOf(SettingsRoute.ROOT)) }
+    var stack by rememberSaveable { mutableStateOf(if (start == SettingsRoute.ROOT) listOf(start) else listOf(SettingsRoute.ROOT, start)) }
     val push: (SettingsRoute) -> Unit = { stack = stack + it }
     val pop: () -> Unit = { if (stack.size > 1) stack = stack.dropLast(1) else onClose() }
     val openLinksInApp = { deviceSettings.settings.value.openLinksInApp }
@@ -126,6 +131,7 @@ fun SettingsFlow(
         }
         SettingsRoute.HIGHLIGHTS -> HighlightWordsScreen(accountSettings, notificationPolicy, onBack = pop)
         SettingsRoute.BLOCKED -> BlockedUsersScreen(blockList, onBack = pop)
+        SettingsRoute.ENCRYPTION -> EncryptionSettingsScreen(sessionActions.e2ee, api, onBack = pop)
     }
 }
 
@@ -136,7 +142,8 @@ private enum class Destination(val title: String, val icon: ImageVector, val rou
     DISPLAY("Display", Icons.Filled.FormatSize, SettingsRoute.DISPLAY),
     NOTIFICATIONS("Notifications", Icons.Filled.NotificationsActive, SettingsRoute.NOTIFICATIONS),
     HIGHLIGHTS("Highlight Words", Icons.Filled.BorderColor, SettingsRoute.HIGHLIGHTS),
-    BLOCKED("Blocked Users", Icons.Filled.PanTool, SettingsRoute.BLOCKED);
+    BLOCKED("Blocked Users", Icons.Filled.PanTool, SettingsRoute.BLOCKED),
+    ENCRYPTION("Encryption", Icons.Filled.Lock, SettingsRoute.ENCRYPTION);
 
     fun tint(c: FiberIrcColors): Color = when (this) {
         SESSIONS -> c.accent
@@ -146,6 +153,7 @@ private enum class Destination(val title: String, val icon: ImageVector, val rou
         NOTIFICATIONS -> c.error
         HIGHLIGHTS -> Brand.amber
         BLOCKED -> Brand.teal
+        ENCRYPTION -> c.submitGreen
     }
 
     val glyph: Color get() = if (this == DISPLAY) Color(0xFF06222A) else Color.White
@@ -225,11 +233,18 @@ fun SettingsScreen(
         )
     }
 
+    val e2eeState = sessionActions.e2ee?.state?.collectAsStateWithLifecycle()?.value
+
     fun value(d: Destination): String? = when (d) {
         Destination.DISPLAY -> appearance.title()
         Destination.NOTIFICATIONS -> notificationsAllowed?.let { if (it) "Allowed" else "Off" }
         Destination.HIGHLIGHTS -> highlightWords.size.toString()
         Destination.BLOCKED -> masks.mapNotNull(BlockListStore::nickPattern).size.toString()
+        Destination.ENCRYPTION -> when (e2eeState) {
+            is E2eeServiceState.Running -> if (e2eeState.status.locked) "Locked" else if (e2eeState.status.ready) "On" else "Setup"
+            is E2eeServiceState.Unavailable, is E2eeServiceState.RecoveryRequired -> "Problem"
+            else -> null
+        }
         else -> null
     }
 
@@ -251,7 +266,7 @@ fun SettingsScreen(
     val trimmed = query.trim()
     val searching = trimmed.isNotEmpty()
     fun matches(title: String) = !searching || foldedContains(title, trimmed)
-    val destinations = Destination.entries.filter { matches(it.title) }
+    val destinations = Destination.entries.filter { (it != Destination.ENCRYPTION || sessionActions.e2ee != null) && matches(it.title) }
     val footerItems = FooterItem.entries.filter { matches(it.title) }
     val signOutTitle = "Sign Out"
     val deleteTitle = "Delete Account…"
@@ -345,9 +360,13 @@ fun SettingsScreen(
                             centered = true,
                             onClick = if (busy) null else ({
                                 if (title == signOutTitle) {
-                                    // No touches while the server calls run (`isUserInteractionEnabled = false`).
+                                    // No touches while the server calls run (`isUserInteractionEnabled = false`); a
+                                    // sign-out cancelled at the encryption-keys question gives the screen back.
                                     busy = true
-                                    scope.launch { sessionActions.signOut() }
+                                    scope.launch {
+                                        sessionActions.signOut()
+                                        busy = false
+                                    }
                                 } else {
                                     confirmation = Confirmation(
                                         title = "Delete Account",

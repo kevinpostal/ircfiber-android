@@ -2,14 +2,20 @@
 <!-- Android 12+. The install id (data/prefs/DeviceIdentity.kt) must never reach another phone through a cloud backup
      or a device-to-device transfer: that phone would share this one's settings profile and bouncer cursor. Neither
      may the push state (data/push/PushRegistrar.kt): its FCM token belongs to this install, and a restored
-     "already asked" flag would keep the new phone from ever asking for notification permission. -->
+     "already asked" flag would keep the new phone from ever asking for notification permission. Nor the encryption
+     directory (data/e2ee/E2eeStore.kt: files/e2ee/<account scope>/store.db with its -wal/-shm/-journal files, and the
+     sealed pending drafts under files/e2ee/drafts/): its Keystore key stays on this device, and another device
+     restoring this MLS state would clone this device's identity. New devices restore history through encrypted
+     backup or device linking instead. -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="fiberirc_device_identity.xml" />
         <exclude domain="sharedpref" path="fiberirc_push.xml" />
+        <exclude domain="file" path="e2ee/" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="fiberirc_device_identity.xml" />
         <exclude domain="sharedpref" path="fiberirc_push.xml" />
+        <exclude domain="file" path="e2ee/" />
     </device-transfer>
 </data-extraction-rules>

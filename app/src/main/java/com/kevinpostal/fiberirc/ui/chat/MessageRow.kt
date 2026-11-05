@@ -57,6 +57,7 @@ import com.kevinpostal.fiberirc.data.irc.IrcLine
 import com.kevinpostal.fiberirc.data.irc.IrcLineKind
 import com.kevinpostal.fiberirc.data.irc.IrcEventKind
 import com.kevinpostal.fiberirc.data.irc.IrcMember
+import com.kevinpostal.fiberirc.data.irc.IrcSendState
 import com.kevinpostal.fiberirc.data.irc.mentions
 import com.kevinpostal.fiberirc.data.prefs.DeviceSettings
 import com.kevinpostal.fiberirc.data.prefs.DisplayPrefs
@@ -350,6 +351,12 @@ private fun buildBody(line: IrcLine, style: ChatRowStyle, member: IrcMember?, em
             s.append("(message deleted)", SpanStyle(color = c.textTertiary, fontStyle = FontStyle.Italic, fontSize = regularSize))
             return
         }
+        // An encrypted row without plaintext shows what it is, never ciphertext (no links, previews or mentions).
+        val placeholder = EncryptedRowText.placeholder(line)
+        if (placeholder != null) {
+            s.append(placeholder, SpanStyle(color = c.textTertiary, fontStyle = FontStyle.Italic, fontSize = regularSize))
+            return
+        }
         val formatted = IrcFormatting.toAnnotatedString(line.text, color, c.background, prefs.formatColors) {
             legible(it, c.dark)
         }
@@ -373,13 +380,13 @@ private fun buildBody(line: IrcLine, style: ChatRowStyle, member: IrcMember?, em
             if (!style.separateNickLine && sender.isNotEmpty()) s.appendSender(sender, " ", member, style)
             val color = if (line.kind == IrcLineKind.NOTICE) serverLogColor(line.serverLogTag, c) ?: c.noticeText else c.chatText
             appendChat(color)
-            plain = if (line.redacted) "(message deleted)" else IrcFormatting.strip(line.text)
+            plain = if (line.redacted) "(message deleted)" else EncryptedRowText.placeholder(line) ?: IrcFormatting.strip(line.text)
         }
         IrcLineKind.ACTION -> {
             s.append("* ", SpanStyle(color = c.textTertiary, fontSize = regularSize))
             s.appendSender(sender, " ", member, style)
             appendChat(c.chatText)
-            plain = if (line.redacted) "(message deleted)" else IrcFormatting.strip(line.text)
+            plain = if (line.redacted) "(message deleted)" else EncryptedRowText.placeholder(line) ?: IrcFormatting.strip(line.text)
         }
         IrcLineKind.EVENT -> {
             val event = line.event
@@ -404,6 +411,18 @@ private fun buildBody(line: IrcLine, style: ChatRowStyle, member: IrcMember?, em
             " (edited)",
             SpanStyle(color = c.textTertiary, fontFamily = FontFamily.Default, fontWeight = FontWeight.Normal, fontSize = 12.sp),
         )
+    }
+    if (chat && !line.redacted) {
+        EncryptedRowText.status(line)?.let { status ->
+            val failed = line.send is IrcSendState.Failed || line.send is IrcSendState.Uncertain
+            s.append(
+                " $status",
+                SpanStyle(
+                    color = if (failed) c.error else c.textTertiary,
+                    fontFamily = FontFamily.Default, fontWeight = FontWeight.Normal, fontSize = 12.sp,
+                ),
+            )
+        }
     }
     return RowBody(s.b.toAnnotatedString(), plain, links)
 }

@@ -11,6 +11,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.kevinpostal.fiberirc.data.irc.ConnectionSettings
+import com.kevinpostal.fiberirc.data.prefs.DeviceSettingsStore
 import com.kevinpostal.fiberirc.support.FakeSiteServer
 import com.kevinpostal.fiberirc.support.fakeMeJson
 import com.kevinpostal.fiberirc.support.testAccountStores
@@ -51,6 +52,7 @@ class LoginE2eTest {
         return LoginViewModel(
             api = api,
             stores = testAccountStores(app, api),
+            deviceSettings = DeviceSettingsStore(app),
             deviceId = { "test-device" },
             appPrefs = app.getSharedPreferences(LoginViewModel.APP_PREFS_FILE, Context.MODE_PRIVATE),
             notice = notice,

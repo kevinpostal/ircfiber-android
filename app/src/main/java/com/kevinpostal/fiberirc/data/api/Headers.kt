@@ -16,6 +16,9 @@ const val DEVICE_OS_HEADER = "X-IRCFiber-Device-OS"
 const val DEVICE_APP_VERSION_HEADER = "X-IRCFiber-Device-App-Version"
 /** This install's IANA time zone (quiet hours in "This device's timezone" mode); read per request, it can change. */
 const val DEVICE_TZ_HEADER = "X-IRCFiber-Device-TZ"
+/** This install's MLS device id (the secure encryption identity, separate from [DEVICE_HEADER]); sent only on
+ *  encryption API calls, and only once that identity is durably committed. */
+const val MLS_DEVICE_HEADER = "X-IRCFiber-MLS-Device"
 const val USER_AGENT = "FiberIRC Android"
 
 /**

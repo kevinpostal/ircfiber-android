@@ -47,10 +47,13 @@ import com.kevinpostal.fiberirc.ui.media.MediaTap
 import com.kevinpostal.fiberirc.ui.media.mediaTap
 import com.kevinpostal.fiberirc.ui.settings.BlockedUsersScreen
 import com.kevinpostal.fiberirc.ui.settings.SettingsFlow
+import com.kevinpostal.fiberirc.ui.settings.SettingsRoute
+import com.kevinpostal.fiberirc.ui.encryption.ConversationEncryptionScreen
+import com.kevinpostal.fiberirc.ui.encryption.EncryptionSessionHost
 
 /** A screen pushed over the shell (iOS pushes or presents these over the session). */
 private sealed interface SessionRoute {
-    data object Settings : SessionRoute
+    data class Settings(val start: SettingsRoute = SettingsRoute.ROOT) : SessionRoute
     data class Network(val info: NetworkInfo?, val prefill: NetworkPrefill?) : SessionRoute
     data class BrowseChannels(val client: IrcClient) : SessionRoute
     data class Whois(val client: IrcClient, val nick: String) : SessionRoute
@@ -62,6 +65,7 @@ private sealed interface SessionRoute {
     data class BanList(val client: IrcClient, val buffer: IrcBuffer) : SessionRoute
     data class Search(val client: IrcClient, val buffer: IrcBuffer) : SessionRoute
     data object BlockedUsers : SessionRoute
+    data class ConversationEncryption(val client: IrcClient, val buffer: IrcBuffer) : SessionRoute
 }
 
 /**
@@ -78,7 +82,7 @@ fun SessionHost(deps: Deps, manager: IrcSessionManager, sessionActions: SessionA
 
     val navigation = remember(manager) {
         ShellNavigation(
-            openSettings = { routes += SessionRoute.Settings },
+            openSettings = { routes += SessionRoute.Settings() },
             addNetwork = { prefill -> routes += SessionRoute.Network(null, prefill) },
             editNetwork = { info -> routes += SessionRoute.Network(info, null) },
             browseChannels = { client -> routes += SessionRoute.BrowseChannels(client) },
@@ -87,6 +91,12 @@ fun SessionHost(deps: Deps, manager: IrcSessionManager, sessionActions: SessionA
             conversationCleanup = { routes += SessionRoute.ConversationCleanup },
             channelInfo = { client, buffer -> routes += SessionRoute.ChannelInfo(client, buffer) },
             reorder = { title, items, save -> routes += SessionRoute.Reorder(title, items, save) },
+            conversationEncryption = { client, buffer -> routes += SessionRoute.ConversationEncryption(client, buffer) },
+            encryptionSettings = {
+                if ((routes.lastOrNull() as? SessionRoute.Settings)?.start != SettingsRoute.ENCRYPTION) {
+                    routes += SessionRoute.Settings(SettingsRoute.ENCRYPTION)
+                }
+            },
         )
     }
     val controller = rememberShellController(
@@ -168,6 +178,14 @@ fun SessionHost(deps: Deps, manager: IrcSessionManager, sessionActions: SessionA
         }
     }
     viewer?.let { v -> ImageViewerScreen(v.url, v.source, deps.media, onClose = { viewer = null }) }
+    EncryptionSessionHost(
+        manager = manager,
+        controller = controller,
+        api = deps.api,
+        prefs = deps.bufferPrefs,
+        sessionActions = sessionActions,
+        openEncryptionSettings = { navigation.encryptionSettings() },
+    )
 }
 
 @Composable
@@ -180,7 +198,7 @@ private fun RouteScreen(
 ) {
     val context = LocalContext.current
     when (route) {
-        SessionRoute.Settings -> SettingsFlow(
+        is SessionRoute.Settings -> SettingsFlow(
             api = deps.api,
             baseUrl = deps.apiBaseUrl,
             accountSettings = deps.accountSettings,
@@ -191,6 +209,7 @@ private fun RouteScreen(
             blockList = deps.blockList,
             sessionActions = sessionActions,
             onClose = pop,
+            start = route.start,
         )
         is SessionRoute.Network -> NetworkEditorScreen(
             api = deps.api,
@@ -233,6 +252,15 @@ private fun RouteScreen(
             onClose = pop,
         )
         SessionRoute.BlockedUsers -> BlockedUsersScreen(deps.blockList, onBack = pop)
+        is SessionRoute.ConversationEncryption -> ConversationEncryptionScreen(
+            service = controller.manager.e2ee,
+            api = deps.api,
+            prefs = deps.bufferPrefs,
+            manager = controller.manager,
+            client = route.client,
+            buffer = route.buffer,
+            onBack = pop,
+        )
     }
 }
 

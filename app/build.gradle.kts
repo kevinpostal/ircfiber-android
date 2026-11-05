@@ -120,6 +120,12 @@ dependencies {
     implementation(libs.coil.network.okhttp)
     implementation(libs.coil.gif)
     implementation(libs.androidx.browser)
+    implementation(libs.androidx.webkit)
+    implementation(libs.zxing.core)
+    // Native passkeys with the WebAuthn PRF extension (encryption backup/unlock); the Play Services module is the
+    // Credential Manager provider bridge before Android 14.
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play.services.auth)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
 

@@ -20,18 +20,37 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.kevinpostal.fiberirc.data.irc.IrcBuffer
 import com.kevinpostal.fiberirc.data.irc.IrcClient
+import com.kevinpostal.fiberirc.data.irc.IrcEncryptionConfig
 import com.kevinpostal.fiberirc.data.irc.LogExport
 import com.kevinpostal.fiberirc.ui.theme.Grid
 
 /**
  * Export Log (ports `LogExport.run`): "Loading history…" while [IrcClient.loadAllHistory] walks [buffer] back, then
- * the share sheet with the text file; a write failure shows "Couldn't export <buffer>". [onDone] once it's over.
+ * the share sheet with the text file; a write failure shows "Couldn't export <buffer>". [onDone] once it's over. On an
+ * encrypting network the user first confirms that the file holds decrypted text without encryption.
  */
 @Composable
 fun LogExportDialog(client: IrcClient, buffer: IrcBuffer, onDone: () -> Unit) {
     val context = LocalContext.current
     var error by remember { mutableStateOf<String?>(null) }
+    var disclosed by remember { mutableStateOf(client.encryption !is IrcEncryptionConfig.Encrypted) }
     var loading by remember { mutableStateOf(true) }
+
+    if (!disclosed) {
+        AlertDialog(
+            onDismissRequest = onDone,
+            title = { Text("Export Decrypted Messages?") },
+            text = {
+                Text(
+                    "${buffer.name} may contain end-to-end encrypted messages. The exported file holds their decrypted " +
+                        "text and isn't encrypted; anyone you share it with can read it.",
+                )
+            },
+            dismissButton = { TextButton(onClick = onDone) { Text("Cancel") } },
+            confirmButton = { TextButton(onClick = { disclosed = true }) { Text("Export") } },
+        )
+        return
+    }
 
     LaunchedEffect(client, buffer) {
         LogExport.prepare(context, client, buffer)

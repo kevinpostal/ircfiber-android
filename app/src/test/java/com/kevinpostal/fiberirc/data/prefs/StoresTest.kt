@@ -1,6 +1,7 @@
 package com.kevinpostal.fiberirc.data.prefs
 
 import com.kevinpostal.fiberirc.data.api.Me
+import com.kevinpostal.fiberirc.data.api.BufferPrefValue
 import com.kevinpostal.fiberirc.data.api.NotificationPolicyView
 import com.kevinpostal.fiberirc.data.api.PolicyHighlightWord
 import com.kevinpostal.fiberirc.data.api.SiteApiError
@@ -20,6 +21,9 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+
+private val on = BufferPrefValue.Bool(true)
+private val off = BufferPrefValue.Bool(false)
 
 class StoresTest {
     private class Boom : Exception()
@@ -99,7 +103,7 @@ class StoresTest {
     @Test
     fun bufferPrefsDefaultsAndRevert() = runTest {
         val store = BufferPrefsStore(MemoryPrefs()) { _, _, _ -> throw Boom() }
-        store.load(mapOf("n:#Chan" to mapOf("mute" to true)))
+        store.load(mapOf("n:#Chan" to mapOf("mute" to on)))
         val device = DeviceSettings(collapseJoinPart = false, embedUploads = false)
         assertEquals(true, store.value(BufferPrefsStore.Key.MUTE, "n", "#chan"))
         assertTrue(store.effective(BufferPrefsStore.Key.EXPAND_JOIN_PART, "n", "#x", device, formatColors = true))
@@ -108,17 +112,76 @@ class StoresTest {
         assertTrue(store.effective(BufferPrefsStore.Key.NICK_SUGGESTIONS, "n", "#x", device, formatColors = true))
         assertNull(store.value(BufferPrefsStore.Key.MUTE, "", "#chan"))
         runCatching { store.set(mapOf(BufferPrefsStore.Key.TYPING to false), "n", "#chan") }
-        assertEquals(mapOf("n:#Chan" to mapOf("mute" to true)), store.values.value)
+        assertEquals(mapOf("n:#Chan" to mapOf("mute" to on)), store.values.value)
     }
 
     @Test
     fun bufferPrefsSavesChangedKeysUnderStoredSpelling() = runTest {
-        var call: Triple<String, String, Map<String, Boolean>>? = null
+        var call: Triple<String, String, Map<String, BufferPrefValue>>? = null
         val store = BufferPrefsStore(MemoryPrefs()) { n, c, p -> call = Triple(n, c, p) }
-        store.load(mapOf("n:#Chan" to mapOf("mute" to true)))
+        store.load(mapOf("n:#Chan" to mapOf("mute" to on)))
         store.set(mapOf(BufferPrefsStore.Key.TYPING to false), "n", "#chan")
-        assertEquals(Triple("n", "#Chan", mapOf("typing" to false)), call)
-        assertEquals(mapOf("n:#Chan" to mapOf("mute" to true, "typing" to false)), store.values.value)
+        assertEquals(Triple("n", "#Chan", mapOf("typing" to off)), call)
+        assertEquals(mapOf("n:#Chan" to mapOf("mute" to on, "typing" to off)), store.values.value)
+    }
+
+    @Test
+    fun bufferPrefsKeepStringModeAndUnknownKeysThroughSaveAndCache() = runTest {
+        val prefs = MemoryPrefs()
+        val sent = ArrayList<Map<String, BufferPrefValue>>()
+        val store = BufferPrefsStore(prefs) { _, _, p -> sent += p }
+        // The web's entry: a lock, the PGP mode, a key this app doesn't know, and a value of another JSON type.
+        val me = SiteJson.decodeFromString(
+            Me.serializer(),
+            """{"id":"u","username":"k","bufferPrefs":{"n:@Bob":{"e2ee":true,"e2eeMode":"pgp","future":"x","n":3}}}""",
+        )
+        store.load(me.bufferPrefs)
+        assertEquals(true, store.e2ee("n", "@bob"))
+        assertEquals(BufferPrefsStore.E2eeMode.PGP, store.e2eeMode("n", "@bob"))
+        store.set(mapOf(BufferPrefsStore.Key.MUTE to true), "n", "@bob")
+        // Only the changed key is sent; every other kept value stays, the number drops (lossy as before).
+        assertEquals(listOf(mapOf("mute" to on)), sent)
+        val expected = mapOf(
+            "n:@Bob" to mapOf("e2ee" to on, "e2eeMode" to BufferPrefValue.Text("pgp"), "future" to BufferPrefValue.Text("x"), "mute" to on),
+        )
+        assertEquals(expected, store.values.value)
+        // The on-disk cache survives a restart with the string values intact.
+        assertEquals(expected, BufferPrefsStore(prefs, null).values.value)
+        store.setE2eeMode(BufferPrefsStore.E2eeMode.MLS, "n", "@bob")
+        assertEquals(mapOf("e2eeMode" to BufferPrefValue.Text("mls")), sent.last())
+    }
+
+    @Test
+    fun bufferPrefsOldBooleanCacheMigrates() {
+        val prefs = MemoryPrefs()
+        prefs.edit().putString(BufferPrefsStore.KEY, """{"n:#a":{"mute":true,"e2ee":false}}""").apply()
+        val store = BufferPrefsStore(prefs, null)
+        assertEquals(true, store.value(BufferPrefsStore.Key.MUTE, "n", "#a"))
+        assertEquals(false, store.e2ee("n", "#a"))
+        assertNull(store.e2eeMode("n", "#a"))
+    }
+
+    @Test
+    fun failedOlderLockSaveCannotTurnANewerLockOff() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        var calls = 0
+        val store = BufferPrefsStore(MemoryPrefs()) { _, _, _ ->
+            if (++calls == 1) {
+                gate.await()
+                throw Boom()
+            }
+        }
+        // An older "off" save is still running when the user turns the lock on; then the older one fails.
+        val first = launch { runCatching { store.setE2ee(false, "n", "#a") } }
+        testScheduler.runCurrent()
+        assertTrue(store.saving("n", "#a"))
+        store.load(mapOf("n:#A" to mapOf("mute" to on))) // a /api/me answer meanwhile doesn't overwrite it
+        assertEquals(false, store.e2ee("n", "#a"))
+        store.setE2ee(true, "n", "#a")
+        gate.complete(Unit)
+        first.join()
+        assertEquals(true, store.e2ee("n", "#a"))
+        assertFalse(store.saving("n", "#a"))
     }
 
     @Test

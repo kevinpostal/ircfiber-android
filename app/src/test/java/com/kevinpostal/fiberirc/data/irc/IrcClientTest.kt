@@ -80,14 +80,15 @@ class IrcClientTest {
     private var t = FakeTransport()
     private val pm = FakePathMonitor()
     private val fg = FakeForegroundMonitor()
-    private var c = IrcClient(settings, t, pm, fg, dispatcher)
+    // FakeTransport protocol tests run without encryption, explicitly.
+    private var c = IrcClient(settings, t, pm, fg, dispatcher, encryption = IrcEncryptionConfig.Plaintext)
 
     /** A fresh client and transport (the iOS tests rebuild `c` after changing `settings`). */
     private fun rebuild(clock: () -> java.time.Instant = java.time.Instant::now, change: (ConnectionSettings) -> ConnectionSettings = { it }) {
         c.dispose()
         settings = change(settings)
         t = FakeTransport()
-        c = IrcClient(settings, t, pm, fg, dispatcher, clock)
+        c = IrcClient(settings, t, pm, fg, dispatcher, clock, IrcEncryptionConfig.Plaintext)
     }
 
     @After
@@ -238,9 +239,9 @@ class IrcClientTest {
 
     @Test
     fun bouncerAttachSendsPassAndNeverJoins() {
-        rebuild { it.copy(serverPassword = "n/irc-fiber@android-abc:deadbeef", viaBouncer = true) }
+        rebuild { it.copy(serverPassword = "n@android-abc/irc-fiber:deadbeef", viaBouncer = true) }
         connectAndOpen()
-        assertEquals(listOf("CAP LS 302", "PASS n/irc-fiber@android-abc:deadbeef", "NICK n", "USER n 0 * n"), t.sentLines)
+        assertEquals(listOf("CAP LS 302", "PASS n@android-abc/irc-fiber:deadbeef", "NICK n", "USER n 0 * n"), t.sentLines)
         t.clearSent()
         t.feed(":s 001 n :hi")
         assertEquals(listOf("PING fiberirc-sync"), t.sentLines) // engine session owns membership: no JOIN
@@ -256,7 +257,7 @@ class IrcClientTest {
     }
 
     private fun useBouncer() = rebuild {
-        it.copy(nick = "Zodiac", serverPassword = "n/supernets@android-abc:deadbeef", viaBouncer = true)
+        it.copy(nick = "Zodiac", serverPassword = "n@android-abc/supernets:deadbeef", viaBouncer = true)
     }
 
     /** Mirrors bnc `dumpChannels`: JOIN → 332 → 353 → 366 on every attach. */
@@ -311,7 +312,7 @@ class IrcClientTest {
     @Test
     fun rejectedBouncerPasswordStopsReconnectAndNotifies() {
         var rejections = 0
-        rebuild { it.copy(serverPassword = "gone/irc-fiber@android-abc:deadbeef", viaBouncer = true) }
+        rebuild { it.copy(serverPassword = "gone@android-abc/irc-fiber:deadbeef", viaBouncer = true) }
         c.addObserver(object : IrcClientListener {
             override fun onCredentialsRejected(client: IrcClient) {
                 rejections++
@@ -331,7 +332,7 @@ class IrcClientTest {
 
     @Test
     fun markReadFromServerRecomputesUnreadAndOnlyAdvances() {
-        rebuild { it.copy(serverPassword = "n/irc-fiber@android-abc:deadbeef", viaBouncer = true) }
+        rebuild { it.copy(serverPassword = "n@android-abc/irc-fiber:deadbeef", viaBouncer = true) }
         connectAndOpen()
         t.feed(":s 001 n :hi")
         t.feed(":n!u@h JOIN #c")
@@ -349,7 +350,7 @@ class IrcClientTest {
     }
 
     private fun bouncerWithReadMarker() {
-        rebuild { it.copy(serverPassword = "n/irc-fiber@android-abc:deadbeef", viaBouncer = true) }
+        rebuild { it.copy(serverPassword = "n@android-abc/irc-fiber:deadbeef", viaBouncer = true) }
         connectAndOpen()
         t.feed(":s CAP * LS :server-time draft/read-marker")
         assertEquals("CAP REQ :server-time draft/read-marker", t.sentLines.last())
@@ -386,7 +387,7 @@ class IrcClientTest {
 
     @Test
     fun markReadStaysLocalWithoutCap() {
-        rebuild { it.copy(serverPassword = "n/irc-fiber@android-abc:deadbeef", viaBouncer = true) }
+        rebuild { it.copy(serverPassword = "n@android-abc/irc-fiber:deadbeef", viaBouncer = true) }
         connectAndOpen()
         t.feed(":s CAP * LS :server-time")
         t.feed(":s CAP n ACK :server-time")

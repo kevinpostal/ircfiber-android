@@ -35,7 +35,7 @@ data class ConnectionSettings(
 
     companion object {
         /**
-         * Bouncer attach: `PASS <user>/<network>@<clientId>:<token>` (bnc/wire.d). The stable per-device clientId
+         * Bouncer attach: `PASS <user>@<clientId>/<network>:<token>` (bnc/wire.d). The stable per-device clientId
          * (`DeviceIdentity.id`, a lower-case UUID, valid under bnc's `[A-Za-z0-9_.:-]`) gives this phone its own
          * playback cursor, so a reattach replays only what was missed.
          */
@@ -51,7 +51,7 @@ data class ConnectionSettings(
             useTLS = bouncer.tls,
             nick = network.nick.ifEmpty { username },
             realName = username,
-            serverPassword = "$username/${network.slug}@$clientId:$token",
+            serverPassword = "$username@$clientId/${network.slug}:$token",
             autoJoinChannels = "",
             viaBouncer = true,
             networkName = network.name,

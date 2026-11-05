@@ -143,4 +143,19 @@ class AppRouterTest {
         AppRouter.consume(b)
         assertNull(AppRouter.pending.value)
     }
+
+    @Test
+    fun encryptedDraftRouteCarriesOnlyAWellFormedId() {
+        val id = "0f8fad5b-d9cb-469f-a165-70867728950e"
+        val uri = AppRouter.encryptedDraftUri(id)
+        assertEquals("fiberirc://encrypted-draft?id=$id", uri)
+        assertEquals(id, AppRouter.encryptedDraftId(uri))
+        // Never a buffer link, an auth hand-off, or a draft id that could name another file.
+        assertNull(AppRouter.parse(uri))
+        assertFalse(AppRouter.isAuthRedirect(uri))
+        assertNull(AppRouter.encryptedDraftId("fiberirc://encrypted-draft?id=../x"))
+        assertNull(AppRouter.encryptedDraftId("fiberirc://encrypted-draft?id=$id&send=1"))
+        assertNull(AppRouter.encryptedDraftId("fiberirc://encrypted-draft/extra?id=$id"))
+        assertNull(AppRouter.encryptedDraftId("https://encrypted-draft?id=$id"))
+    }
 }

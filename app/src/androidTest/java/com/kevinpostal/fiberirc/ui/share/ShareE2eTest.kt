@@ -22,10 +22,16 @@ import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.kevinpostal.fiberirc.data.api.originOf
+import com.kevinpostal.fiberirc.data.e2ee.E2eeExternalSend
+import com.kevinpostal.fiberirc.data.e2ee.E2eePendingDrafts
+import com.kevinpostal.fiberirc.data.e2ee.E2eePolicySnapshot
+import com.kevinpostal.fiberirc.data.e2ee.E2eePolicySnapshots
 import com.kevinpostal.fiberirc.data.irc.ConnectionSettings
 import com.kevinpostal.fiberirc.data.prefs.ShareTarget
 import com.kevinpostal.fiberirc.data.prefs.ShareTargetsStore
 import com.kevinpostal.fiberirc.support.FakeSiteServer
+import com.kevinpostal.fiberirc.support.fakeMeJson
 import com.kevinpostal.fiberirc.support.TestSession
 import com.kevinpostal.fiberirc.ui.shell.SessionHost
 import com.kevinpostal.fiberirc.ui.theme.FiberIrcTheme
@@ -36,6 +42,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -50,8 +57,10 @@ import org.junit.runner.RunWith
  * The share sheet ([ShareSheet] + [ShareSheetController], the production code [ShareTargetActivity] hosts) over a
  * [TestSession]: the real signed-in [SessionHost] joins channels on fake transports, its real
  * [com.kevinpostal.fiberirc.ui.shell.ShellController] publishes them to the real [ShareTargetsStore], then the sheet
- * opens on an `ACTION_SEND` intent and posts to the [FakeSiteServer] (`POST /api/networks/<id>/messages`, as the
- * iOS share extension does — the share sheet never writes to the IRC socket itself).
+ * opens on an `ACTION_SEND` intent. A target the main app's fresh policy snapshot and the server (`/api/me`,
+ * `/api/mls/policy`) agree is unencrypted posts to the [FakeSiteServer] (`POST /api/networks/<id>/messages`, as the
+ * iOS share extension does — the share sheet never writes to the IRC socket itself); an encrypted one becomes a
+ * sealed pending draft handed to the app, with nothing posted.
  *
  * Hosts the composable rather than launching the Activity, whose [com.kevinpostal.fiberirc.FiberIrcApp] graph
  * points at production ircfiber.com.
@@ -70,16 +79,37 @@ class ShareE2eTest {
     /** What the sheet asked its host to do: `true` posted (RESULT_OK + finish), `false` cancelled, null still open. */
     @Volatile private var finished: Boolean? = null
 
+    /** The pending draft the sheet handed to the app instead of posting. */
+    @Volatile private var continuedDraft: String? = null
+
+    private val origin get() = originOf(server.baseUrl.toHttpUrl())
+
     @Before
     fun setUp() {
         server = FakeSiteServer(InstrumentationRegistry.getInstrumentation().targetContext)
         // Published targets and recents persist in prefs; start each test from none.
         app.getSharedPreferences(ShareTargetsStore.FILE, Context.MODE_PRIVATE).edit().clear().commit()
+        // The account u1: #random is unencrypted, #general is locked (as the main app's snapshot and server say).
+        server.on("GET", "/api/me", body = fakeMeJson(id = "u1").replace(""""bufferPrefs":{}""", """"bufferPrefs":{"net1:#general":{"e2ee":true}}"""))
+        server.on("GET", "/api/mls/policy", body = """{"dmDefault":false,"requireUnlock":false}""")
+        E2eePolicySnapshots.write(
+            app,
+            E2eePolicySnapshot(
+                userId = "u1",
+                apiOrigin = origin,
+                writtenAt = System.currentTimeMillis(),
+                dmDefault = false,
+                autoLockIncoming = false,
+                perTarget = mapOf("net1:#random" to E2eePolicySnapshots.OFF, "net1:#general" to E2eePolicySnapshots.ON),
+            ),
+        )
     }
 
     @After
     fun tearDown() {
         scope.cancel()
+        E2eePolicySnapshots.remove(app, origin, "u1")
+        E2eePendingDrafts.removeAccount(app, origin, "u1")
         server.shutdown()
     }
 
@@ -138,7 +168,8 @@ class ShareE2eTest {
         lateinit var controller: ShareSheetController
         compose.runOnUiThread {
             controller = ShareSheetController(
-                app, session.deps.api, session.deps.media, session.deps.shareTargets.targets, scope,
+                app, session.deps.media, E2eeExternalSend(app, session.deps.api), session.deps.shareTargets.targets, scope,
+                continueInApp = { continuedDraft = it },
             ) { sent -> finished = sent }
             controller.load(intent)
             shareOpen = controller
@@ -250,5 +281,42 @@ class ShareE2eTest {
         compose.onNodeWithText("Cancel").performClick()
         compose.waitUntil(timeoutMillis = 2_000) { finished != null }
         assertEquals(false, finished)
+    }
+
+    /**
+     * An encrypted target: Post never reaches `POST /api/networks/…`; the text is sealed as a pending draft of the
+     * signed-in account and handed to the app, which can read it back (another account can't).
+     */
+    @Test
+    fun encryptedTargetBecomesPendingDraft() {
+        val session = TestSession(app, server, listOf(testNet))
+        server.on("POST", "/api/networks/net1/messages", body = """{"ok":true}""")
+        val marker = "secret-share-marker-${System.nanoTime()}"
+        openShareSheet(session, mapOf(testNet to listOf("#general", "#random")), textShare(marker, shortcutId = "net1:#general"))
+
+        compose.onNodeWithText("Post").performClick()
+        compose.waitUntil(timeoutMillis = 5_000) { continuedDraft != null }
+
+        assertNull(finished)
+        assertTrue(messagePosts().isEmpty())
+        assertTrue(server.requests().none { it.body.clone().readUtf8().contains(marker) })
+        val draft = E2eePendingDrafts.load(app, continuedDraft!!, origin, "u1")
+        assertEquals("net1", draft?.networkId)
+        assertEquals("#general", draft?.target)
+        assertEquals(marker, draft?.body)
+        assertNull(E2eePendingDrafts.load(app, continuedDraft!!, origin, "u2"))
+    }
+
+    /** Without a fresh snapshot from the app, even an unencrypted target is unknown: it continues in the app. */
+    @Test
+    fun missingSnapshotContinuesInApp() {
+        E2eePolicySnapshots.remove(app, origin, "u1")
+        val session = TestSession(app, server, listOf(testNet))
+        server.on("POST", "/api/networks/net1/messages", body = """{"ok":true}""")
+        openShareSheet(session, mapOf(testNet to listOf("#general", "#random")), textShare("hi", shortcutId = "net1:#random"))
+
+        compose.onNodeWithText("Post").performClick()
+        compose.waitUntil(timeoutMillis = 5_000) { continuedDraft != null }
+        assertTrue(messagePosts().isEmpty())
     }
 }

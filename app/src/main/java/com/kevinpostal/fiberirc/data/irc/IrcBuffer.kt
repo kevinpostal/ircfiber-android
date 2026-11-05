@@ -36,7 +36,10 @@ data class IrcEvent(
 data class IrcLine(
     val time: Instant,
     val sender: String?,
-    /** An IRCv3 `+draft/edit` replaces it (see [IrcBuffer.replaceText]). */
+    /**
+     * What the row shows. An IRCv3 `+draft/edit` replaces it (see [IrcBuffer.replaceText]). An encrypted row holds
+     * its decrypted plaintext here only while [e2e] is readable; otherwise it is empty and the row shows a placeholder.
+     */
     val text: String,
     val kind: IrcLineKind,
     /** IRCv3 `msgid` tag; dedupes paged CHATHISTORY rows against live/replayed ones. */
@@ -54,7 +57,84 @@ data class IrcLine(
     val redacted: Boolean = false,
     /** Replaced by an IRCv3 `+draft/edit`. */
     val edited: Boolean = false,
+    /** End-to-end encryption state of an encrypted row (`!MLS1:`/`!PGP1:` body); null on every plaintext row. */
+    val e2e: IrcE2e? = null,
+    /** Your own encrypted send's progress; null once its bytes reached the IRC connection (and on every other row). */
+    val send: IrcSendState? = null,
+    /** Stable local row id: decryption results and send progress find the row by it (then by [msgid]). */
+    val id: String = IrcLine.newId(),
+) {
+    companion object {
+        private val nextId = java.util.concurrent.atomic.AtomicLong()
+        private val session = java.lang.Long.toHexString(java.util.concurrent.ThreadLocalRandom.current().nextLong())
+
+        fun newId(): String = "r:$session:${nextId.incrementAndGet()}"
+    }
+}
+
+/** The shared runtime's `E2eInfo.state` union. */
+enum class IrcE2eState(val wire: String) {
+    PENDING("pending"),
+    VERIFIED("verified"),
+    UNVERIFIED("unverified"),
+    BEFORE_JOIN("before-join"),
+    LOCKED("locked"),
+    PARTIAL("partial"),
+    EXPIRED("expired"),
+    NOT_ADDRESSED("not-addressed"),
+    ERROR("error"),
+    ;
+
+    /** The row's plaintext is available (verified, or decrypted from a sender whose identity isn't verified). */
+    val readable: Boolean get() = this == VERIFIED || this == UNVERIFIED
+
+    companion object {
+        fun fromWire(s: String?): IrcE2eState? = entries.firstOrNull { it.wire == s }
+    }
+}
+
+/**
+ * Encryption details of one logical encrypted row. [wire] is this row's immutable ciphertext wire line (the final
+ * chunk of a chunked message); [ciphertext] the complete logical ciphertext once the runtime reassembled it (what a
+ * resubmission sends). [source] is what the runtime's normalized `IRCMessage` needs again on resubmission.
+ */
+data class IrcE2e(
+    val state: IrcE2eState,
+    val wire: String,
+    val ciphertext: String? = null,
+    val identity: String? = null,
+    val epoch: Int? = null,
+    val source: IrcE2eSource,
 )
+
+/** The wire facts of an encrypted row that its decryption depends on. */
+data class IrcE2eSource(
+    val command: String,
+    val target: String,
+    val nick: String,
+    val account: String? = null,
+    val prefix: String? = null,
+    val hostmask: String? = null,
+    val selfEcho: Boolean = false,
+    val label: String? = null,
+    val editOf: String? = null,
+    /** Arrived live (attach replay included), so it counts toward unread/highlights; false on history pages. */
+    val live: Boolean = true,
+    /** Your own encrypted send's optimistic row: its plaintext came from the composer, not a decryption. */
+    val own: Boolean = false,
+)
+
+/** Progress of your own encrypted send (shown on its optimistic row). */
+sealed interface IrcSendState {
+    /** Waiting for the encryption service, encrypting, or writing. */
+    data object Sending : IrcSendState
+
+    /** Nothing reached the wire; [IrcClient.retryEncryptedSend] tries again with fresh ciphertext. */
+    data class Failed(val reason: String) : IrcSendState
+
+    /** Some or all bytes may have been written before the link failed; never re-sent automatically. */
+    data class Uncertain(val reason: String) : IrcSendState
+}
 
 data class IrcMember(
     val nick: String,
@@ -168,6 +248,29 @@ class IrcBuffer(val name: String, val kind: IrcBufferKind) {
         return true
     }
 
+    /** The held row with stable [id], or null. */
+    fun line(id: String): IrcLine? = _lines.firstOrNull { it.id == id }
+
+    /** The newest held row with `msgid`, or null. */
+    fun lineByMsgid(msgid: String): IrcLine? = _lines.lastOrNull { it.msgid == msgid }
+
+    /** Replaces the row with stable [id] by `change(row)` in place. Returns the new row, or null when not held. */
+    fun updateLine(id: String, change: (IrcLine) -> IrcLine): IrcLine? {
+        val i = _lines.indexOfFirst { it.id == id }
+        if (i < 0) return null
+        val next = change(_lines[i])
+        _lines[i] = next
+        return next
+    }
+
+    /** Drops the row with stable [id]. Returns whether it was held. */
+    fun removeLine(id: String): Boolean {
+        val i = _lines.indexOfFirst { it.id == id }
+        if (i < 0) return false
+        _lines.removeAt(i)
+        return true
+    }
+
     /**
      * Drops every held line (`/clear`, Clear Backlog). Paging stays off until live lines arrive and trimming
      * re-opens it, so the cleared rows aren't fetched straight back.
@@ -190,14 +293,17 @@ class IrcBuffer(val name: String, val kind: IrcBufferKind) {
      * Merges a `CHATHISTORY` page, skipping rows already present (by `msgid`, else by time/sender/kind/text).
      * Never trims and leaves unread state alone: paged rows are old. Returns the number of rows inserted.
      */
-    fun insertHistory(rows: List<IrcLine>): Int {
+    fun insertHistory(rows: List<IrcLine>): Int = insertHistoryRows(rows).size
+
+    /** [insertHistory], returning the rows actually inserted (in page order). */
+    fun insertHistoryRows(rows: List<IrcLine>): List<IrcLine> {
         val ids = HashSet<String>()
         val keys = HashSet<String>()
         for (l in _lines) {
             val id = l.msgid
             if (id != null) ids.add(id) else keys.add(dedupeKey(l))
         }
-        var added = 0
+        val added = ArrayList<IrcLine>()
         for (row in rows) {
             val id = row.msgid
             if (id != null) {
@@ -206,7 +312,7 @@ class IrcBuffer(val name: String, val kind: IrcBufferKind) {
                 continue
             }
             insertSorted(row)
-            added++
+            added.add(row)
         }
         return added
     }
@@ -316,7 +422,8 @@ class IrcBuffer(val name: String, val kind: IrcBufferKind) {
     companion object {
         const val MAX_LINES = 2000
 
-        private fun dedupeKey(l: IrcLine): String = "${l.time}|${l.sender ?: ""}|${l.kind}|${l.text}"
+        /** Encrypted rows compare by their ciphertext: their shown text changes as decryption settles. */
+        private fun dedupeKey(l: IrcLine): String = "${l.time}|${l.sender ?: ""}|${l.kind}|${l.e2e?.wire ?: l.text}"
     }
 }
 
@@ -331,6 +438,8 @@ fun IrcLine.mentions(nick: String): Boolean {
     if (nick.isEmpty() || (kind != IrcLineKind.MESSAGE && kind != IrcLineKind.ACTION && kind != IrcLineKind.NOTICE)) {
         return false
     }
+    // Highlights come only from available plaintext: never from ciphertext or a placeholder.
+    if (e2e != null && !e2e.state.readable) return false
     if (sender != null && sender.equals(nick, ignoreCase = true)) return false
     val cached = mentionPattern
     val regex = if (cached != null && cached.first == nick) {

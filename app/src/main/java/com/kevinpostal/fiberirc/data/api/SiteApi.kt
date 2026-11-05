@@ -237,6 +237,34 @@ class SiteApi(private val client: OkHttpClient, val baseUrl: String) {
             .getOrElse { throw SiteApiError.Malformed }
     }
 
+    /** An HTTP answer passed through as is (status and text body), for callers that parse errors themselves. */
+    class RawAnswer(val code: Int, val body: String)
+
+    /**
+     * One call of the encryption API (`/api` + [encodedPath], already allowlisted and percent-encoded by the
+     * caller) whose status and body go back untouched: the shared encryption coordinator parses HTTP errors once
+     * itself. Redirects are never followed (this client's policy); a 3xx comes back as its status.
+     */
+    suspend fun rawApiRequest(
+        method: String,
+        encodedPath: String,
+        encodedQuery: String?,
+        body: JsonElement?,
+        headers: Map<String, String>,
+    ): Result<RawAnswer> = attempt {
+        require(encodedPath.startsWith("/")) { "path must be absolute under /api" }
+        val url = base.newBuilder().addEncodedPathSegments("api" + encodedPath).encodedQuery(encodedQuery).build()
+        val rb = when {
+            body != null -> body.toString().toRequestBody(JSON)
+            method == "GET" || method == "DELETE" -> null
+            else -> ByteArray(0).toRequestBody(null)
+        }
+        val builder = Request.Builder().url(url).method(method, rb)
+        for ((name, value) in headers) builder.header(name, value)
+        val a = send(builder.build())
+        RawAnswer(a.code, a.body)
+    }
+
     // MARK: Plumbing
 
     private class Answer(val code: Int, val body: String)

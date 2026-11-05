@@ -18,6 +18,7 @@ import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.FlashOff
 import androidx.compose.material.icons.outlined.IosShare
 import androidx.compose.material.icons.outlined.Lan
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.PersonAdd
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Search
@@ -67,6 +68,7 @@ enum class BufferActionItem(val title: String) {
     SETTINGS("Settings"),
     SEND_FEEDBACK("Send Feedback"),
     SIGN_OUT("Sign Out"),
+    ENCRYPTION("Encryption"),
     ;
 
     /** Red text and icon. */
@@ -100,6 +102,7 @@ enum class BufferActionItem(val title: String) {
             SETTINGS -> Icons.Outlined.Settings
             SEND_FEEDBACK -> Icons.Outlined.Email
             SIGN_OUT -> Icons.AutoMirrored.Outlined.ExitToApp
+            ENCRYPTION -> Icons.Outlined.Lock
         }
 }
 
@@ -116,6 +119,8 @@ data class BufferActionContext(
     val networkConnected: Boolean?,
     /** Your rank in the channel (`IrcMember.rank`): half-ops (2) and above get Ban List. */
     val rank: Int,
+    /** The buffer's network has end-to-end encryption (a site network of a signed-in session). */
+    val encryption: Boolean = false,
 )
 
 /** The menu's four sections in display order (`BufferActionSheet.Groups`). */
@@ -161,6 +166,8 @@ object BufferActionSheet {
                 contextual.add(BufferActionItem.DELETE)
             }
         }
+        // A channel or conversation of an encrypting session: its lock, audience, mode and safety number.
+        if (c.encryption && c.kind != IrcBufferKind.SERVER) contextual.add(BufferActionItem.ENCRYPTION)
         val common = listOf(
             BufferActionItem.IGNORE_LIST, BufferActionItem.ADD_NETWORK, BufferActionItem.JOIN_CHANNEL,
             BufferActionItem.DISPLAY_OPTIONS, BufferActionItem.EXPORT_LOG, BufferActionItem.SEND_FEEDBACK,
@@ -197,6 +204,7 @@ class BufferActionCallbacks(
     val onSettings: () -> Unit = {},
     val onSendFeedback: () -> Unit = {},
     val onSignOut: () -> Unit = {},
+    val onEncryption: () -> Unit = {},
 ) {
     fun perform(item: BufferActionItem) = when (item) {
         BufferActionItem.PIN -> onPin()
@@ -222,6 +230,7 @@ class BufferActionCallbacks(
         BufferActionItem.SETTINGS -> onSettings()
         BufferActionItem.SEND_FEEDBACK -> onSendFeedback()
         BufferActionItem.SIGN_OUT -> onSignOut()
+        BufferActionItem.ENCRYPTION -> onEncryption()
     }
 }
 

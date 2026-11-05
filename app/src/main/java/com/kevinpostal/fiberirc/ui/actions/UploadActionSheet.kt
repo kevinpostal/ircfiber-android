@@ -25,6 +25,7 @@ import androidx.core.content.FileProvider
 import com.kevinpostal.fiberirc.BuildConfig
 import com.kevinpostal.fiberirc.data.irc.IrcBuffer
 import com.kevinpostal.fiberirc.data.irc.IrcClient
+import com.kevinpostal.fiberirc.data.irc.IrcLockDecision
 import com.kevinpostal.fiberirc.data.media.FileTooLarge
 import com.kevinpostal.fiberirc.data.media.MediaApi
 import com.kevinpostal.fiberirc.data.media.PhotoLibrary
@@ -235,6 +236,7 @@ fun UploadActionSheet(
             UploadConfirmScreen(
                 payload = s.payload,
                 progress = s.progress,
+                encrypted = client.lockDecision(buffer.name) != IrcLockDecision.OFF,
                 onCancel = ::finish,
                 onSend = { filename, message ->
                     val named = s.payload.copy(filename = filename, mime = UploadFile.mimeType(filename, s.payload.mime))

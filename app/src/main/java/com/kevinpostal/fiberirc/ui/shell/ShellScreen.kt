@@ -60,6 +60,9 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ProcessLifecycleOwner
 import com.kevinpostal.fiberirc.data.api.SiteApi
+import com.kevinpostal.fiberirc.data.irc.IrcBuffer
+import com.kevinpostal.fiberirc.data.irc.IrcBufferKind
+import com.kevinpostal.fiberirc.data.irc.IrcEncryptionConfig
 import com.kevinpostal.fiberirc.data.irc.IrcSessionManager
 import com.kevinpostal.fiberirc.data.prefs.AccountStores
 import com.kevinpostal.fiberirc.data.prefs.DeviceSettingsStore
@@ -237,6 +240,13 @@ fun ShellScreen(
                     controller.requestComposer(ComposerRequest.Mention(nick))
                 },
                 modifier = Modifier.fillMaxSize(),
+                onEncryption = if (controller.manager.e2ee == null) null else ({ cl, nick ->
+                    if (cl.encryption is IrcEncryptionConfig.Encrypted && cl.settings.networkId.isNotEmpty()) {
+                        controller.closeDrawer()
+                        // The conversation's encryption without opening one: a detached buffer names the peer.
+                        controller.navigation.conversationEncryption(cl, cl.buffer(nick) ?: IrcBuffer(nick, IrcBufferKind.QUERY))
+                    }
+                }),
             )
         }
 

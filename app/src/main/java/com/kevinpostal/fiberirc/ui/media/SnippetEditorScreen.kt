@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kevinpostal.fiberirc.data.irc.IrcBuffer
 import com.kevinpostal.fiberirc.data.irc.IrcClient
+import com.kevinpostal.fiberirc.data.irc.IrcLockDecision
 import com.kevinpostal.fiberirc.data.media.MediaApi
 import com.kevinpostal.fiberirc.data.media.MediaUrls
 import com.kevinpostal.fiberirc.data.media.Snippet
@@ -174,6 +175,9 @@ private fun SnippetEditorContent(
                 colors = fieldColors(),
                 modifier = Modifier.fillMaxWidth(),
             )
+            if (client.lockDecision(buffer.name) != IrcLockDecision.OFF) {
+                Text(ENCRYPTED_UPLOAD_NOTE.replace("uploaded file", "snippet"), color = c.textSecondary, fontSize = 12.sp)
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(Grid.gutter)) {
                 FilledTonalButton(
                     enabled = hasText && !busy,

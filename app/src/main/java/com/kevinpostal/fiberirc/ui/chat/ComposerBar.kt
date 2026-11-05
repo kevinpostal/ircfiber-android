@@ -186,6 +186,10 @@ fun ComposerBar(
     chatFontScale: Double = 1.0,
     interceptSend: (plain: String) -> Boolean = { false },
     afterSend: (plain: String, wasStyled: Boolean) -> Unit = { _, _ -> },
+    /** The buffer's encryption lock control, first in the row (encrypted networks only). */
+    lockControl: (@Composable () -> Unit)? = null,
+    /** The encryption state line above the field (encrypting buffers only). */
+    encryptionBanner: (@Composable () -> Unit)? = null,
 ) {
     val c = LocalFiberIrcColors.current
     val hasText = value.text.isNotEmpty()
@@ -215,11 +219,13 @@ fun ComposerBar(
         if (showSuggestions && suggestions.isNotEmpty()) {
             CompletionStrip(suggestions, selectedSuggestion, onPickSuggestion, uiFont)
         }
+        encryptionBanner?.invoke()
         Row(
             Modifier.fillMaxWidth().padding(start = Grid.margin, end = Grid.margin, top = Grid.gutter),
             horizontalArrangement = Arrangement.spacedBy(Grid.gutter),
             verticalAlignment = Alignment.Bottom,
         ) {
+            lockControl?.invoke()
             if (onUploadClick != null) {
                 ControlButton("Upload", "uploadButton", onUploadClick) {
                     Icon(Icons.Outlined.IosShare, contentDescription = null, tint = c.textSecondary)
@@ -325,7 +331,8 @@ fun ComposerBar(
                 }
             }
         }
-        val typingStart = Grid.margin + if (onUploadClick != null) Grid.control + Grid.gutter else 0.dp
+        val typingStart = Grid.margin + (if (onUploadClick != null) Grid.control + Grid.gutter else 0.dp) +
+            (if (lockControl != null) Grid.control + Grid.gutter else 0.dp)
         if (typingText.isNotEmpty()) {
             Text(
                 typingText,
@@ -342,7 +349,7 @@ fun ComposerBar(
 
 /** A 36×36dp control (`Grid.control`). */
 @Composable
-private fun ControlButton(label: String, tag: String, onClick: () -> Unit, content: @Composable () -> Unit) {
+internal fun ControlButton(label: String, tag: String, onClick: () -> Unit, content: @Composable () -> Unit) {
     Box(
         Modifier
             .size(Grid.control)

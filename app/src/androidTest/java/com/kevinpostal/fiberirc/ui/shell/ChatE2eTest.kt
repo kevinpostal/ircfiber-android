@@ -90,4 +90,34 @@ class ChatE2eTest {
         }
         assertTrue(session.transport.sentLines.any { it == "PRIVMSG #general :hi everyone" })
     }
+    /** A blank bouncer buffer must request history once attach finishes, without requiring a scroll. */
+    @Test
+    fun bouncerHistoryLoadsAfterAttachCompletes() {
+        val bouncerSettings = settings.copy(
+            viaBouncer = true,
+            autoJoinChannels = "",
+            serverPassword = "tester@test-device/net1:token",
+        )
+        val session = TestSession(app, server, listOf(bouncerSettings))
+        compose.setContent { SessionHost(session.deps, session.manager, session.sessionActions) }
+        session.transport.feed(":s CAP * LS :server-time message-tags echo-message batch")
+        session.transport.feed(":s CAP tester ACK :server-time message-tags echo-message batch")
+        session.transport.feed(":s 001 tester :hi")
+        session.transport.feed(":tester!u@h JOIN #general")
+        compose.waitUntil(timeoutMillis = 5_000) {
+            compose.onAllNodesWithContentDescription("Message").fetchSemanticsNodes().isNotEmpty()
+        }
+        assertTrue(session.transport.sentLines.none { it == "CHATHISTORY LATEST #general * 100" })
+        session.transport.feed(":s PONG s :fiberirc-sync")
+        compose.waitUntil(timeoutMillis = 5_000) {
+            session.transport.sentLines.any { it == "CHATHISTORY LATEST #general * 100" }
+        }
+        session.transport.feed(":s BATCH +h chathistory #general")
+        session.transport.feed("@batch=h;time=2026-11-04T10:00:00.000Z;msgid=m1 :alice!u@h PRIVMSG #general :replayed after attach")
+        session.transport.feed(":s BATCH -h")
+        compose.waitUntil(timeoutMillis = 5_000) {
+            compose.onAllNodesWithContentDescription("alice: replayed after attach", substring = true)
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+    }
 }

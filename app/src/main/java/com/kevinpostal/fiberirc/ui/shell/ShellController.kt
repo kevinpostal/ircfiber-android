@@ -68,6 +68,10 @@ class ShellNavigation(
     val channelInfo: (IrcClient, IrcBuffer) -> Unit,
     /** `ReorderScreen(title, items (id, title), save)`. */
     val reorder: (title: String, items: List<Pair<String, String>>, save: suspend (List<String>) -> Unit) -> Unit,
+    /** A channel's or conversation's encryption (lock, audience, mode, safety number, OpenPGP peer key). */
+    val conversationEncryption: (IrcClient, IrcBuffer) -> Unit,
+    /** Settings → Encryption (devices, backup, linking, defaults, unlock). */
+    val encryptionSettings: () -> Unit,
 )
 
 /** A small dialog the shell shows (`Prompts.swift`, confirmations, errors). */

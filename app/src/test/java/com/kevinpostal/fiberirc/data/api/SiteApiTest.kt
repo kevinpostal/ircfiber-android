@@ -46,7 +46,11 @@ class SiteApiTest {
         val me = api.me().getOrThrow()
         assertEquals("kev", me.username)
         assertEquals(listOf("n1:#a"), me.pinnedChannels)
-        assertEquals(mapOf("n1:#a" to mapOf("mute" to true)), me.bufferPrefs)
+        // Booleans and strings stay (a string such as `e2eeMode` or a future key survives); other JSON types drop out.
+        assertEquals(
+            mapOf("n1:#a" to mapOf("mute" to BufferPrefValue.Bool(true), "bad" to BufferPrefValue.Text("x"))),
+            me.bufferPrefs,
+        )
         assertNull(me.displayPrefs)
     }
 

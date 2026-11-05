@@ -309,6 +309,7 @@ private fun ChatPane(
         style = style,
         callbacks = callbacks,
         header = historyHeaderState(buffer),
+        canPage = client.canRequestOlderHistory(buffer),
         modifier = Modifier.fillMaxSize(),
         state = listState,
         flashKey = flashKey,

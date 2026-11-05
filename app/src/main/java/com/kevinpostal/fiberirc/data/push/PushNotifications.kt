@@ -27,8 +27,9 @@ import com.kevinpostal.fiberirc.ui.theme.notificationFill
  * Turns each ircfiber.com push into a conversation notification (Android's equivalent of the iOS Notification
  * Service extension's communication notification): a message from its sender with the sender's letter avatar, one
  * notification per buffer ([PushPayload.threadId], also the conversation shortcut id), a channel shown as a named
- * group conversation. `buffer_msg` offers Reply (sent by [PushReplyReceiver] without opening the app),
- * `channel_invite` offers Join; tapping opens the buffer.
+ * group conversation. `buffer_msg` offers Reply (sent by [PushReplyReceiver] without opening the app when the buffer
+ * is positively unencrypted, else kept as a sealed draft that continues in the app), `channel_invite` offers Join;
+ * tapping opens the buffer.
  */
 internal object PushNotifications {
     const val KEY_REPLY = "reply_text"
