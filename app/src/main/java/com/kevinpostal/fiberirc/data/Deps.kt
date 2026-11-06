@@ -1,14 +1,18 @@
 package com.kevinpostal.fiberirc.data
 
 import android.app.Application
+import androidx.annotation.MainThread
 import com.kevinpostal.fiberirc.BuildConfig
 import com.kevinpostal.fiberirc.data.api.CookieJarStore
 import com.kevinpostal.fiberirc.data.api.SiteApi
 import com.kevinpostal.fiberirc.data.api.fiberIrcHttpClient
+import com.kevinpostal.fiberirc.data.diagnostics.AppLog
 import com.kevinpostal.fiberirc.data.e2ee.E2eePasskeys
 import com.kevinpostal.fiberirc.data.e2ee.E2eeService
 import com.kevinpostal.fiberirc.data.irc.ConnectionSettings
+import com.kevinpostal.fiberirc.data.irc.IrcConnectionService
 import com.kevinpostal.fiberirc.data.irc.IrcSessionManager
+import com.kevinpostal.fiberirc.data.irc.IrcSessionState
 import com.kevinpostal.fiberirc.data.media.MediaApi
 import com.kevinpostal.fiberirc.data.prefs.AccountSettingsStore
 import com.kevinpostal.fiberirc.data.prefs.AccountStores
@@ -26,6 +30,9 @@ import com.kevinpostal.fiberirc.data.prefs.ShareTargetsStore
 import com.kevinpostal.fiberirc.data.push.ConversationShortcuts
 import com.kevinpostal.fiberirc.data.push.PushRegistrar
 import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import okhttp3.OkHttpClient
 
 /**
@@ -34,8 +41,9 @@ import okhttp3.OkHttpClient
  * conversation shortcuts. Built once by [com.kevinpostal.fiberirc.FiberIrcApp]; activities and services reach it
  * through `application as FiberIrcApp`. Main-thread confined like the stores it holds.
  *
- * IRC connections are per sign-in (they need the login's [ConnectionSettings]), so the graph hands out
- * [sessionManager]s instead of holding one.
+ * The signed-in IRC [session] belongs to the process, not an activity: recreating or reopening
+ * [com.kevinpostal.fiberirc.MainActivity] shows the same connections, and [IrcConnectionService] keeps them out of
+ * the cached-app freezer meanwhile. A cold start begins at sign-in; nothing here signs in by itself.
  */
 class Deps(private val app: Application, val apiBaseUrl: String = BuildConfig.API_BASE_URL) {
     val deviceIdentity = DeviceIdentity(app)
@@ -75,15 +83,61 @@ class Deps(private val app: Application, val apiBaseUrl: String = BuildConfig.AP
     /** Native PRF passkeys for encryption backup/unlock; the root activity attaches to present the system sheets. */
     val passkeys = E2eePasskeys(app, apiBaseUrl)
 
+    private val _session = MutableStateFlow<IrcSessionState>(IrcSessionState.Login(null, 0))
+
+    /** Sign-in or the signed-in session's connections (main thread). */
+    val session: StateFlow<IrcSessionState> = _session.asStateFlow()
+    private var loginGeneration = 0
+
     /**
-     * A signed-in session's connections and its account's encryption service (one per session, main process
-     * only); [showLogin] leaves for the sign-in screen (rejected credentials, expired session).
+     * Signed in (user-visible sign-in only): one session's connections and its account's encryption service, kept
+     * alive by the foreground [IrcConnectionService]. A no-op while a live session exists, so reopening the
+     * activity never opens a second set of sockets. When Android refuses the foreground service the connections
+     * never start and sign-in shows why.
      */
-    fun sessionManager(settings: List<ConnectionSettings>, showLogin: (notice: String) -> Unit): IrcSessionManager =
-        IrcSessionManager(app, settings, api, { deviceIdentity.id }, showLogin) { manager ->
+    @MainThread
+    fun startSession(settings: List<ConnectionSettings>) {
+        if ((_session.value as? IrcSessionState.Session)?.manager?.isTornDown == false) return
+        lateinit var manager: IrcSessionManager
+        // Only the current session may leave for sign-in; a replaced one's late callback is ignored.
+        val leave: (String) -> Unit = { notice ->
+            if ((_session.value as? IrcSessionState.Session)?.manager === manager) showLogin(notice)
+        }
+        manager = IrcSessionManager(app, settings, api, { deviceIdentity.id }, leave) { m ->
             E2eeService(
-                app, api, httpClient, { deviceIdentity.id }, manager, bufferPrefs,
+                app, api, httpClient, { deviceIdentity.id }, m, bufferPrefs,
                 passkeys = passkeys.takeIf { it.supported },
             )
         }
+        _session.value = IrcSessionState.Session(manager)
+        try {
+            IrcConnectionService.start(app)
+        } catch (e: RuntimeException) {
+            // ForegroundServiceStartNotAllowedException / SecurityException: unkept sockets would be frozen.
+            AppLog.e(TAG, "connection service refused to start", e)
+            stopConnections("Android didn't allow IRC Fiber to stay connected — open the app and sign in again.")
+            return
+        }
+        manager.start()
+    }
+
+    /**
+     * Sign-out, account deletion or rejected/expired credentials: disconnects every client, shows sign-in with
+     * [notice] (empty: none) and ends the foreground service.
+     */
+    @MainThread
+    fun showLogin(notice: String) = endSession(notice, resumeStoredSession = true)
+
+    /** A stopped/refused foreground service waits for explicit sign-in; it must not auto-reconnect in a loop. */
+    @MainThread
+    fun stopConnections(notice: String) = endSession(notice, resumeStoredSession = false)
+
+    private fun endSession(notice: String, resumeStoredSession: Boolean) {
+        (_session.value as? IrcSessionState.Session)?.manager?.stop()
+        _session.value = IrcSessionState.Login(notice.ifEmpty { null }, ++loginGeneration, resumeStoredSession)
+    }
+
+    private companion object {
+        const val TAG = "FiberIRC.session"
+    }
 }

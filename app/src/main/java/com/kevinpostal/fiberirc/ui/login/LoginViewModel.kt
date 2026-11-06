@@ -59,6 +59,7 @@ class LoginViewModel(
     private val deviceId: () -> String,
     private val appPrefs: SharedPreferences,
     private val notice: String?,
+    resumeStoredSession: Boolean = true,
 ) : ViewModel() {
     private val _state = MutableStateFlow(LoginUiState())
     val state: StateFlow<LoginUiState> = _state.asStateFlow()
@@ -71,7 +72,12 @@ class LoginViewModel(
 
     init {
         viewModelScope.launch { loadProviders() }
-        viewModelScope.launch { resumeSession() }
+        if (resumeStoredSession) {
+            viewModelScope.launch { resumeSession() }
+        } else {
+            show(notice.orEmpty())
+            setFormVisible(true)
+        }
     }
 
     fun sessionShown() {
@@ -292,10 +298,11 @@ class LoginViewModelFactory(
     private val deviceSettings: DeviceSettingsStore,
     private val deviceId: () -> String,
     private val notice: String? = null,
+    private val resumeStoredSession: Boolean = true,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         val prefs = context.getSharedPreferences(LoginViewModel.APP_PREFS_FILE, Context.MODE_PRIVATE)
-        return LoginViewModel(api, stores, deviceSettings, deviceId, prefs, notice) as T
+        return LoginViewModel(api, stores, deviceSettings, deviceId, prefs, notice, resumeStoredSession) as T
     }
 }

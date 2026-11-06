@@ -85,9 +85,9 @@ private val DockedWidth = 200.dp
 private val TwoFingerThreshold = 60.dp
 
 /**
- * The signed-in session's controller over [manager], created once per session: starts listening, picks the first
- * buffer and connects every client; stops listening when it leaves composition. Stopping [manager] (sign-out,
- * rejected credentials) is the session owner's job.
+ * The signed-in session's controller over [manager], created once per composition of the session: starts
+ * listening and picks the first buffer; stops listening when it leaves composition. Connecting and stopping
+ * [manager] (sign-in, sign-out, rejected credentials) is the session owner's job ([com.kevinpostal.fiberirc.data.Deps]).
  */
 @Composable
 fun rememberShellController(
@@ -105,7 +105,6 @@ fun rememberShellController(
     }
     DisposableEffect(controller) {
         controller.start()
-        manager.start()
         onDispose { controller.tearDown() }
     }
     return controller

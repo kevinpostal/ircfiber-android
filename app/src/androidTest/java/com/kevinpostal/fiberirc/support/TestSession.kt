@@ -47,5 +47,6 @@ class TestSession(
 
     init {
         deps.accountStores.loadAtLogin(me)
+        manager.start()
     }
 }

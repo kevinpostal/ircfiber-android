@@ -47,7 +47,7 @@ class LoginE2eTest {
         server.shutdown()
     }
 
-    private fun viewModel(notice: String? = null): LoginViewModel {
+    private fun viewModel(notice: String? = null, resumeStoredSession: Boolean = true): LoginViewModel {
         val api = server.siteApi()
         return LoginViewModel(
             api = api,
@@ -56,6 +56,7 @@ class LoginE2eTest {
             deviceId = { "test-device" },
             appPrefs = app.getSharedPreferences(LoginViewModel.APP_PREFS_FILE, Context.MODE_PRIVATE),
             notice = notice,
+            resumeStoredSession = resumeStoredSession,
         )
     }
 
@@ -66,6 +67,31 @@ class LoginE2eTest {
     /** The sign-in form only renders once `resumeSession()`'s `/api/me` round trip answers; Compose's own
      *  idle-wait doesn't cover that async call, so every test waits for it explicitly before touching a field. */
     private fun waitForForm(vm: LoginViewModel) = compose.waitUntil(timeoutMillis = 5_000) { vm.state.value.formVisible }
+
+    /** Stopping connections must not immediately reopen them using the still-valid account cookie. */
+    @Test
+    fun stoppedSessionRequiresExplicitSignIn() {
+        server.defaultsPasswordLogin(fakeMeJson(username = "carol"))
+        server.on("GET", "/api/me", body = fakeMeJson(username = "carol"))
+        server.on("GET", "/api/me/bouncer", body = """{"enabled":false,"host":"","port":0,"tls":false,"username":""}""")
+        server.on("GET", "/api/me/irc-account", body = """{"status":"ready","account":"carol","password":"x"}""")
+        app.getSharedPreferences(LoginViewModel.APP_PREFS_FILE, Context.MODE_PRIVATE).edit()
+            .putBoolean(LoginViewModel.KEY_ACCEPTED_TERMS, true).commit()
+        var connected: List<ConnectionSettings>? = null
+        val vm = viewModel("Connections stopped", resumeStoredSession = false)
+        host(vm) { connected = it }
+
+        waitForForm(vm)
+        compose.onNodeWithText("Username").assertIsDisplayed()
+        compose.onNodeWithText("Connections stopped").assertIsDisplayed()
+        assertEquals(null, connected)
+
+        compose.onNodeWithText("Username").performTextInput("carol")
+        compose.onNodeWithText("Password").performTextInput("password")
+        compose.onNodeWithText("Sign in").performClick()
+        compose.waitUntil(timeoutMillis = 5_000) { connected != null }
+        assertEquals("carol", connected!![0].nick)
+    }
 
     /** Password sign-in, Community Guidelines accepted, bouncer disabled → direct-ircd settings reach [onSession]. */
     @Test
