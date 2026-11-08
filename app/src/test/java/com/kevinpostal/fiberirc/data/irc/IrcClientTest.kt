@@ -543,6 +543,53 @@ class IrcClientTest {
         assertEquals(IrcState.CONNECTING, c.state)
     }
 
+    private fun exhaustReconnects() {
+        c.connect()
+        repeat(10) {
+            t.disconnect()
+            advance(36_001) // Beyond the largest jittered backoff, without wall-clock sleeps.
+            assertEquals(IrcState.CONNECTING, c.state)
+        }
+        t.disconnect()
+        advance(60_000)
+        assertEquals(IrcState.DISCONNECTED, c.state)
+        assertFalse(t.connected)
+    }
+
+    @Test
+    fun foregroundRestartsExhaustedAutomaticReconnects() {
+        exhaustReconnects()
+        fg.set(false)
+        fg.set(true)
+        assertEquals(IrcState.CONNECTING, c.state)
+        t.disconnect()
+        advance(2_401)
+        assertEquals(IrcState.CONNECTING, c.state)
+        assertTrue(t.connected)
+    }
+
+    @Test
+    fun restoredNetworkRestartsExhaustedAutomaticReconnects() {
+        exhaustReconnects()
+        pm.set(false)
+        pm.set(true)
+        assertEquals(IrcState.CONNECTING, c.state)
+        assertTrue(t.connected)
+    }
+
+    @Test
+    fun explicitDisconnectAfterExhaustionStillPreventsAutomaticReconnect() {
+        exhaustReconnects()
+        c.disconnect()
+        fg.set(false)
+        fg.set(true)
+        pm.set(false)
+        pm.set(true)
+        advance(60_000)
+        assertEquals(IrcState.DISCONNECTED, c.state)
+        assertFalse(t.connected)
+    }
+
     /** Bouncer client with `batch` acked, registered, in `#c`, attach replay synced. */
     private fun connectBouncerWithBatch() {
         rebuild { it.copy(viaBouncer = true) }

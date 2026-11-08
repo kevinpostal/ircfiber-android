@@ -5,6 +5,9 @@ import com.kevinpostal.fiberirc.data.api.CookieJarStore
 import com.kevinpostal.fiberirc.data.api.SiteApi
 import com.kevinpostal.fiberirc.data.api.fiberIrcHttpClient
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.QueueDispatcher
@@ -22,7 +25,7 @@ import okhttp3.mockwebserver.RecordedRequest
  */
 class FakeSiteServer(private val context: Context) {
     val server = MockWebServer().also { it.start() }
-    private val routes = LinkedHashMap<String, () -> MockResponse>()
+    private val routes = LinkedHashMap<String, (RecordedRequest) -> MockResponse>()
     private val seen = ConcurrentLinkedQueue<RecordedRequest>()
 
     init {
@@ -30,7 +33,7 @@ class FakeSiteServer(private val context: Context) {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 seen.add(request)
                 val key = "${request.method} ${request.path?.substringBefore('?')}"
-                routes[key]?.let { return it() }
+                routes[key]?.let { return it(request) }
                 return MockResponse().setResponseCode(200).setBody("{}")
             }
         }
@@ -43,24 +46,31 @@ class FakeSiteServer(private val context: Context) {
 
     /** Routes `method path` (no query string) to a fixed JSON [body]/[code] every time it's hit. */
     fun on(method: String, path: String, code: Int = 200, body: String = "{}") {
-        routes["$method $path"] = { MockResponse().setResponseCode(code).setBody(body) }
+        routes["$method $path"] = { _ -> MockResponse().setResponseCode(code).setBody(body) }
     }
 
     /** Routes `method path` to a freshly computed response each time (e.g. a counter, or a redirect `Location`). */
     fun onEach(method: String, path: String, respond: () -> MockResponse) {
-        routes["$method $path"] = respond
+        routes["$method $path"] = { _ -> respond() }
     }
 
-    /** The real [SiteApi], HTTP client and cookie jar wired to this server, as `Deps` wires them to production. */
-    fun siteApi(deviceId: () -> String = { "test-device" }): SiteApi {
-        val cookieJar = CookieJarStore(context.getSharedPreferences("test_cookies_${System.nanoTime()}", Context.MODE_PRIVATE))
+    /**
+     * The real [SiteApi], HTTP client and cookie jar wired to this server, as `Deps` wires them to production. The
+     * jar persists in the [cookiePrefs] preferences file (fresh per call by default); pass the same name to a later
+     * call to model an app relaunch that keeps its cookies.
+     */
+    fun siteApi(deviceId: () -> String = { "test-device" }, cookiePrefs: String = "test_cookies_${System.nanoTime()}"): SiteApi {
+        val cookieJar = CookieJarStore(context.getSharedPreferences(cookiePrefs, Context.MODE_PRIVATE))
         val client = fiberIrcHttpClient(cookieJar, deviceId)
         return SiteApi(client, baseUrl)
     }
 
     fun shutdown() {
+        signup?.release()
         server.shutdown()
     }
+
+    private var signup: FakeSignup? = null
 
     /** `GET /api/me` → 401 and no social providers: the sign-in form shows empty, nothing stored. */
     fun defaultsSignedOut() {
@@ -86,6 +96,56 @@ class FakeSiteServer(private val context: Context) {
     }
 
     /**
+     * Native registration as the gateway runs it, keyed on real cookies: `POST /register` answers 202
+     * `verification_sent` with an `ircfiber_signup_watch` cookie (or, with [verification] off, 302 plus the session
+     * cookie); `GET /register/status` answers [FakeSignup.state] for a request carrying the watch and `gone` for one
+     * without; `verified` expires the watch and starts the session. `GET /api/me` answers [me] only to a request
+     * carrying the session cookie, so an answer the app never processed cannot sign it in. A disabled bouncer and a
+     * ready IRC account finish the bootstrap. Cookies are not `Secure`: this server is plain http on 127.0.0.1.
+     */
+    fun defaultsSignup(me: String, email: String = "new@example.test", verification: Boolean = true): FakeSignup {
+        val script = FakeSignup()
+        signup = script
+        on("GET", "/api/auth/providers", body = """{"providers":[]}""")
+        routes["POST /register"] = { _ ->
+            script.awaitRelease()
+            if (!verification) {
+                MockResponse().setResponseCode(302).setHeader("Location", "/").addHeader("Set-Cookie", SESSION_COOKIE)
+            } else {
+                MockResponse().setResponseCode(202)
+                    .setBody("""{"status":"verification_sent","email":"$email"}""")
+                    .apply { if (script.setsWatch) addHeader("Set-Cookie", WATCH_COOKIE) }
+            }
+        }
+        routes["GET /register/status"] = { request ->
+            script.statusHits.incrementAndGet()
+            val inFlight = script.statusInFlight.incrementAndGet()
+            script.maxStatusInFlight.accumulateAndGet(inFlight) { a, b -> maxOf(a, b) }
+            try {
+                script.awaitRelease()
+                val state = if (request.cookie(WATCH_NAME)) script.state else "gone"
+                MockResponse().setBody("""{"state":"$state"}""").apply {
+                    if (state == "verified") addHeader("Set-Cookie", WATCH_EXPIRED).addHeader("Set-Cookie", SESSION_COOKIE)
+                    if (state == "gone" && script.sessionOnGone) addHeader("Set-Cookie", SESSION_COOKIE)
+                }
+            } finally {
+                script.statusInFlight.decrementAndGet()
+            }
+        }
+        routes["GET /api/me"] = { request ->
+            if (request.cookie(SESSION_NAME)) MockResponse().setBody(me)
+            else MockResponse().setResponseCode(401).setBody("""{"error":"Unauthorized"}""")
+        }
+        on("GET", "/api/me/bouncer", body = """{"enabled":false,"host":"","port":0,"tls":false,"username":""}""")
+        on("GET", "/api/me/irc-account", body = """{"status":"ready","account":"tester","password":"x"}""")
+        on("POST", "/api/me/irc-account/retry")
+        return script
+    }
+
+    /** Requests to `method path` (no query string) received so far. */
+    fun count(method: String, path: String): Int = seen.count { it.method == method && it.path?.substringBefore('?') == path }
+
+    /**
      * Notification Policy v2: GET `/api/me/notification-policy` answers [view]; the policy and `clients/self`
      * PATCHes and POST `/api/me/notifications/snooze` answer [onWrite] for the request (by default [view]).
      */
@@ -96,8 +156,53 @@ class FakeSiteServer(private val context: Context) {
             "PATCH" to "/api/me/notification-policy/clients/self",
             "POST" to "/api/me/notifications/snooze",
         )) {
-            routes["$method $path"] = { onWrite(seen.last { it.method == method && it.path?.substringBefore('?') == path }) }
+            routes["$method $path"] = onWrite
         }
+    }
+
+    private fun RecordedRequest.cookie(name: String): Boolean =
+        getHeader("Cookie")?.split(';')?.any { it.trim().startsWith("$name=") } == true
+
+    private companion object {
+        const val WATCH_NAME = "ircfiber_signup_watch"
+        const val SESSION_NAME = "ircfiber_session"
+        const val WATCH_COOKIE = "$WATCH_NAME=w1; Path=/; Max-Age=86400; HttpOnly; SameSite=Lax"
+        const val WATCH_EXPIRED = "$WATCH_NAME=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"
+        const val SESSION_COOKIE = "$SESSION_NAME=s1; Path=/; Max-Age=86400; HttpOnly; SameSite=Lax"
+    }
+}
+
+/** Knobs and counters of [FakeSiteServer.defaultsSignup]; read and set from the test thread. */
+class FakeSignup internal constructor() {
+    /** The watch's `GET /register/status` state: `pending`, `verified` (email confirmed) or `gone`. */
+    @Volatile var state: String = "pending"
+    /** Whether the 202 sets the watch cookie (the gateway can accept a signup yet fail to start its watch). */
+    @Volatile var setsWatch: Boolean = true
+    /** A `gone` answer also starts the session: a `verified` answer was lost before the app processed it. */
+    @Volatile var sessionOnGone: Boolean = false
+    val statusHits = AtomicInteger()
+    val statusInFlight = AtomicInteger()
+    /** Most status requests the server was answering at once (reset it before the stretch under test). */
+    val maxStatusInFlight = AtomicInteger()
+
+    @Volatile private var latch: CountDownLatch? = null
+
+    /**
+     * Registration and status requests from now on wait (at most 10 s) until [release]; a held status request
+     * already counts as a hit and as in flight.
+     */
+    fun hold() {
+        latch = CountDownLatch(1)
+    }
+
+    /** Lets held requests answer and stops holding new ones. */
+    fun release() {
+        latch?.countDown()
+        latch = null
+    }
+
+    internal fun awaitRelease() {
+        latch?.await(10, TimeUnit.SECONDS)
     }
 }
 

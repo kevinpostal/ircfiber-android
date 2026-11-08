@@ -1698,9 +1698,9 @@ class IrcClient(
             return
         }
         if (reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
-            Log.e(TAG, "giving up after $MAX_RECONNECT_ATTEMPTS reconnect attempts")
-            appendError("Giving up after $MAX_RECONNECT_ATTEMPTS reconnect attempts", serverBuffer)
-            userDisconnected = true
+            Log.e(TAG, "automatic reconnect paused after $MAX_RECONNECT_ATTEMPTS attempts")
+            appendError("Automatic reconnect paused — return to the app or reconnect to retry", serverBuffer)
+            // Exhausted retries are not an explicit user disconnect: foreground/path recovery may retry.
             return
         }
         // ±20% jitter so clients dropped together (server restart) don't reconnect in lockstep.

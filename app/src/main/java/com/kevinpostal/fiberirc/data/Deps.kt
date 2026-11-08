@@ -29,6 +29,8 @@ import com.kevinpostal.fiberirc.data.prefs.PinListStore
 import com.kevinpostal.fiberirc.data.prefs.ShareTargetsStore
 import com.kevinpostal.fiberirc.data.push.ConversationShortcuts
 import com.kevinpostal.fiberirc.data.push.PushRegistrar
+import com.kevinpostal.fiberirc.data.update.AppUpdates
+import com.kevinpostal.fiberirc.data.update.PlayUpdateFlow
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -40,6 +42,7 @@ import okhttp3.OkHttpClient
  * ircfiber.com call shares, the [SiteApi] over it, this install's [DeviceIdentity], every settings store, push and
  * conversation shortcuts. Built once by [com.kevinpostal.fiberirc.FiberIrcApp]; activities and services reach it
  * through `application as FiberIrcApp`. Main-thread confined like the stores it holds.
+ * Update metadata uses its own unauthenticated client, never [httpClient].
  *
  * The signed-in IRC [session] belongs to the process, not an activity: recreating or reopening
  * [com.kevinpostal.fiberirc.MainActivity] shows the same connections, and [IrcConnectionService] keeps them out of
@@ -82,6 +85,9 @@ class Deps(private val app: Application, val apiBaseUrl: String = BuildConfig.AP
 
     /** Native PRF passkeys for encryption backup/unlock; the root activity attaches to present the system sheets. */
     val passkeys = E2eePasskeys(app, apiBaseUrl)
+
+    val appUpdates = AppUpdates(app)
+    val playUpdateFlow = PlayUpdateFlow(appUpdates)
 
     private val _session = MutableStateFlow<IrcSessionState>(IrcSessionState.Login(null, 0))
 

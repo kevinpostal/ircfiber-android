@@ -15,7 +15,7 @@ IRC chat with a cloud bouncer, rich text, media, and synced message history.
 ```
 
 ## Full description (≤4000 chars)
-The following copy is saved in the default Play listing.
+Local native-signup copy below is not published; the saved Play listing may still describe website-only signup.
 ```
 IRC Fiber is an Android IRC client for ircfiber.com. Sign in to your account and connect to your IRC networks, channels, and conversations. Your cloud bouncer stays joined while your phone is offline, keeping message history ready when you return.
 
@@ -31,7 +31,7 @@ FEATURES
 • A foreground messaging service for background chat connections
 • Sign in with an ircfiber.com account, Google, or GitHub
 
-A free ircfiber.com account is required. Create an account at https://ircfiber.com or sign in with an existing account.
+A free ircfiber.com account is required. Create one in the app with a username, email and password, confirm the emailed link on any device, then return to continue. Existing accounts can sign in as before.
 
 The connection service uses an ongoing Android notification while you are signed in. Android power management and force-stop can still interrupt network access; IRC Fiber reconnects when access returns.
 ```
@@ -77,12 +77,34 @@ Other notes for the form:
 - A non-exported `remoteMessaging` foreground service keeps the session out of the cached-app freezer. It starts at visible sign-in and stops when the session ends; it does not sign in from a boot receiver or restart itself after force-stop.
 - The low-importance **IRC connections** notification shows the connected-network count without message text. On Android 13+, notification permission controls its visibility, not whether the foreground service can run; when denied, Android still lists the service in its active-apps controls.
 - Android deep Doze can still restrict network access. Existing liveness probes and reconnect handling recover when access returns; this is not a battery-optimization exemption or a guarantee against force-stop.
+- TCP connection and TLS handshake attempts time out after 15 seconds each. TLS shutdown runs off the UI thread. After ten failed automatic reconnects, retries pause until the app returns to the foreground, a network path returns, or the user taps the disconnected server title; an explicit user disconnect remains stopped.
 
 ## App signing
 - App signing and upload key: `~/.android/fiberirc-release.jks`, alias `fiberirc`. Back up the keystore securely; Google can reset an upload key, but losing the local signing key prevents independently signing compatible sideload updates.
 - With explicit owner approval, the existing key was encrypted using Google's PEPK tool and imported into Play App Signing.
 - **Verified matching SHA-256:** `C4:67:18:70:CE:AD:06:41:CA:61:78:FB:6D:BD:03:83:EC:00:32:84:3B:6B:2E:35:39:A0:80:7F:8F:3E:2A:FE` in Play's persisted App signing page and the current release APK. Play updates can therefore preserve the sideload installation; do not uninstall an encrypted installation unnecessarily.
 - Release bundle: `app/build/outputs/bundle/release/app-release.aab`, version 1.0.0/code 1, target SDK 36, minimum API 26. Google Play accepted and processed it. No deobfuscation or native debug-symbol file is available in this build; Play reports two non-blocking diagnostics warnings.
+- Local next-release configuration: **1.0.1/code 2**, with the same package, minimum SDK and signing identity. No upload or publication is implied. Release variants fail without the existing key; they never use a debug-key fallback.
+
+## APK update release artifacts
+- Run `./gradlew :app:writeUpdateManifest :app:bundleRelease` with the existing release signing access. The manifest at `app/build/outputs/updates/android-update.json` derives package, name, code and minimum SDK from the release configuration and depends on the signed release APK.
+- Increment both version name and code for each published APK release. Stage the APK as `ircfiber-android.apk` alongside `android-update.json` for a new `android-v<versionName>` tag in `kevinpostal/ircfiber-pages`. Never replace an old release asset or infer version codes from release prose.
+- Uploading requires separate owner authorization. When authorized, upload both assets to a draft, verify the complete pair and signing certificate, then publish. The legacy `android-v1.0.0` has no manifest; before the first complete checker release is published, APK checks can report unavailable.
+- Existing binaries need one ordinary bootstrap upgrade before they can show native update notices. Play/TestFlight/App Store distribution and actual store-upgrade testing remain separate release gates.
+- Locally staged 1.0.1/code 2: `app/build/outputs/updates/ircfiber-android.apk`, `ircfiber-android.aab` and `android-update.json`. Both binary signers match the certificate above. On the isolated `ircfiber-updates-smoke-20261106` emulator, installing the APK over signed 1.0.0 with `adb install -r` retained the package UID and byte-identical sample display preferences; the updated release launched successfully. This is APK upgrade proof, not Play installation proof.
+
+## Optional native updates
+- Release builds check on the first foreground and at most once per 24 hours thereafter. The attempt is recorded before networking; there is no background job or retry loop. Play download status is restored on every foreground independently of that interval. DEBUG automatic checks are disabled; tests inject their channel and clock explicitly.
+- **Settings → Check for updates**, immediately after Version, checks now and bypasses both the interval and a previous Later. Only this action is disabled while checking. Empty/malformed metadata, offline stores and legacy releases without manifests are unavailable, not “up to date”; a newer APK needing a newer OS is reported separately.
+- Notices never lock out chat. An automatic notice waits for a foreground with window focus and a hidden keyboard; another modal or active typing defers it. Later and cancellation retain the known update and suppress that channel/release's automatic notice for 24 hours.
+- Play-installed copies use Play exclusively, including account/track/staged-rollout eligibility: errors never offer an APK fallback. Flexible updates download while chat remains usable; only **Restart to update** calls Play's completion API. Updates without flexible eligibility open the fixed Play listing, with an HTTPS fallback.
+- Sideloaded copies select the highest numeric published stable Android tag carrying both release assets. The manifest must match the package, tag version, positive code/minimum SDK and exact versioned GitHub asset URLs. **Update** opens that APK externally: download it, then open it while keeping the current app installed. The browser and Android installer handle permissions and signature validation; there is no custom installer or install-packages permission.
+- Metadata has a 15-second check deadline and uses a separate unauthenticated client. IRC cookies, device headers and authorization are never sent to GitHub. Fixtures exercise real `FakeAppUpdateManager` transitions and native UI, but Google's fake neither opens system consent nor installs a version; actual eligible Play upgrades still require separately authorized testing uploads.
+
+```sh
+./gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest
+make uitest-only ONLY='SettingsE2eTest|AppUpdatesE2eTest'
+```
 
 ## Play Console setup status — 2026-11-05
 - Account: existing **Broke Jokes** personal developer account (`6263843010714945824`); the user confirmed it should own IRC Fiber.

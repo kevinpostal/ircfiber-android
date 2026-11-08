@@ -72,6 +72,7 @@ import com.kevinpostal.fiberirc.ui.theme.LocalFiberIrcColors
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.roundToInt
+import androidx.compose.ui.focus.onFocusChanged
 
 /**
  * The send pipeline's pure part (`BufferViewController.send` + `IRCClient.sendInput`'s line split): the field's plain
@@ -175,6 +176,7 @@ fun ComposerBar(
     selectedSuggestion: Int? = null,
     onPickSuggestion: (CompletionSuggestion) -> Unit = { onValueChange(applyCompletion(value, it.replaceRange, it.insertText)) },
     showSuggestions: Boolean = true,
+    onInputFocusChange: (Boolean) -> Unit = {},
     onStyleChange: ((ComposeStyle) -> Unit)? = null,
     onStyleClick: (() -> Unit)? = null,
     onUploadClick: (() -> Unit)? = null,
@@ -257,6 +259,7 @@ fun ComposerBar(
                     ),
                     keyboardActions = KeyboardActions(onSend = { send() }),
                     modifier = Modifier
+                        .onFocusChanged { onInputFocusChange(it.isFocused) }
                         .fillMaxWidth()
                         .heightIn(min = Grid.control)
                         .padding(horizontal = Grid.margin, vertical = inset)

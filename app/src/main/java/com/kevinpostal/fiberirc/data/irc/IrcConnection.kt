@@ -7,7 +7,6 @@ import java.net.Socket
 import java.nio.ByteBuffer
 import java.nio.charset.CharacterCodingException
 import java.nio.charset.CodingErrorAction
-import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLPeerUnverifiedException
 import javax.net.ssl.SSLSocket
@@ -109,20 +108,30 @@ class LineFramer {
 
 /**
  * Socket transport (ports `ios/IRC/IRCConnection.swift`): plain TCP, upgraded to TLS with the system trust store
- * and hostname verification (no pinning, like `NWParameters.tls`). Reads in ≤ 65536-byte chunks on
- * [Dispatchers.IO]; one writer coroutine keeps sends ordered.
+ * and hostname verification (no pinning, like `NWParameters.tls`). Reads in ≤ 65536-byte chunks on [scope]
+ * ([Dispatchers.IO]); one writer coroutine keeps sends ordered.
+ *
+ * Every event is emitted under [lock] only while its session is current, so a finished or replaced session can never
+ * deliver a late `Connected` or line after its `Disconnected`. [disconnect] is called on the main thread: it ends the
+ * session and emits `Disconnected` immediately, and the socket close (network I/O: TLS close_notify) runs on [scope].
+ *
+ * The TCP connect and TLS handshake are bounded by [connectTimeoutMs] and [handshakeTimeoutMs], so an attempt can
+ * never stay connecting forever; an established link has no read timeout (the client's idle watchdog owns liveness).
  */
 class IrcConnection(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    private val newSocket: () -> Socket = { Socket() },
+    private val connectTimeoutMs: Int = CONNECT_TIMEOUT_MS,
+    private val handshakeTimeoutMs: Int = HANDSHAKE_TIMEOUT_MS,
 ) : IrcTransport {
     private val channel = Channel<ConnectionEvent>(Channel.UNLIMITED)
     override val events: Flow<ConnectionEvent> = channel.receiveAsFlow()
 
-    private inner class Session {
-        @Volatile var socket: Socket? = null
+    /** One connection. [socket] is set under [lock] while the session is current; [finish] then owns closing it. */
+    private class Session {
+        var socket: Socket? = null
         @Volatile var ready = false
         val outgoing = Channel<String>(Channel.UNLIMITED)
-        val finished = AtomicBoolean(false)
     }
 
     private val lock = Any()
@@ -140,26 +149,30 @@ class IrcConnection(
     private fun run(s: Session, host: String, port: Int, tls: Boolean) {
         var error: Throwable?
         try {
-            val raw = Socket()
-            s.socket = raw
-            raw.connect(InetSocketAddress(host, port))
+            val raw = newSocket()
+            // Attached before connecting, so a disconnect while connecting closes it and aborts the connect.
+            if (!attach(s, raw)) return
+            raw.connect(InetSocketAddress(host, port), connectTimeoutMs)
             val sock = if (tls) upgrade(raw, host, port) else raw
-            s.socket = sock
-            if (s.finished.get()) {
-                sock.close()
-                return
-            }
+            if (sock !== raw && !attach(s, sock)) return
             val source = sock.source().buffer()
             val sink = sock.sink().buffer()
-            s.ready = true
-            channel.trySend(ConnectionEvent.Connected)
+            if (!whileCurrent(s) {
+                    s.ready = true
+                    channel.trySend(ConnectionEvent.Connected)
+                }
+            ) return
             scope.launch { writeLoop(s, sink) }
             val framer = LineFramer()
             val chunk = ByteArray(65536)
             while (true) {
                 val n = source.read(chunk)
                 if (n < 0) break
-                for (line in framer.feed(chunk, n)) channel.trySend(ConnectionEvent.Line(line))
+                val lines = framer.feed(chunk, n)
+                if (lines.isNotEmpty() && !whileCurrent(s) {
+                        for (line in lines) channel.trySend(ConnectionEvent.Line(line))
+                    }
+                ) return
             }
             error = IrcConnectionException.closedByServer()
         } catch (e: CancellationException) {
@@ -170,10 +183,26 @@ class IrcConnection(
         finish(s, error)
     }
 
+    /** Runs [block] under [lock] if [s] is still the current session; false (nothing run) once it has finished. */
+    private inline fun whileCurrent(s: Session, block: () -> Unit): Boolean = synchronized(lock) {
+        if (session !== s) return false
+        block()
+        true
+    }
+
+    /** Hands [sock] to [s] for [finish] to close; if [s] already finished, closes it here (always off the main thread). */
+    private fun attach(s: Session, sock: Socket): Boolean {
+        if (whileCurrent(s) { s.socket = sock }) return true
+        closeQuietly(sock)
+        return false
+    }
+
     private fun upgrade(raw: Socket, host: String, port: Int): Socket {
         val factory = SSLSocketFactory.getDefault() as SSLSocketFactory
         val ssl = factory.createSocket(raw, host, port, true) as SSLSocket
+        ssl.soTimeout = handshakeTimeoutMs
         ssl.startHandshake()
+        ssl.soTimeout = 0
         if (!HttpsURLConnection.getDefaultHostnameVerifier().verify(host, ssl.session)) {
             ssl.close()
             throw SSLPeerUnverifiedException("certificate does not match $host")
@@ -194,21 +223,31 @@ class IrcConnection(
         }
     }
 
-    /** Delivers the disconnect exactly once for this connection. */
+    /**
+     * Ends [s] if it is still current: emits its one `Disconnected` and frees the slot for the next [connect] together,
+     * synchronously, and closes its socket on [scope] (callers include the main thread). Stale callers are no-ops.
+     */
     private fun finish(s: Session, error: Throwable?) {
-        synchronized(lock) {
+        val sock = synchronized(lock) {
             if (session !== s) return
             session = null
+            s.ready = false
+            val sock = s.socket
+            s.socket = null
+            // Last: a collector resumed inline here may already call connect() for the next session.
+            channel.trySend(ConnectionEvent.Disconnected(error))
+            sock
         }
-        if (!s.finished.compareAndSet(false, true)) return
         if (error != null) Log.e(TAG, "connection ended: $error")
-        s.ready = false
         s.outgoing.close()
+        if (sock != null) scope.launch { closeQuietly(sock) }
+    }
+
+    private fun closeQuietly(sock: Socket) {
         try {
-            s.socket?.close()
+            sock.close()
         } catch (_: IOException) {
         }
-        channel.trySend(ConnectionEvent.Disconnected(error))
     }
 
     override fun send(line: String) {
@@ -228,5 +267,7 @@ class IrcConnection(
 
     private companion object {
         const val TAG = "FiberIRC/net"
+        const val CONNECT_TIMEOUT_MS = 15_000
+        const val HANDSHAKE_TIMEOUT_MS = 15_000
     }
 }

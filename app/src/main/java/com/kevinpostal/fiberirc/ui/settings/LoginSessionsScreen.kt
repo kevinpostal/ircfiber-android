@@ -1,5 +1,9 @@
 package com.kevinpostal.fiberirc.ui.settings
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -10,10 +14,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import com.kevinpostal.fiberirc.data.api.LoginSession
 import com.kevinpostal.fiberirc.data.api.SiteApi
 import com.kevinpostal.fiberirc.data.api.loginSessions
 import com.kevinpostal.fiberirc.data.api.revokeSession
+import com.kevinpostal.fiberirc.ui.theme.Grid
 import com.kevinpostal.fiberirc.ui.theme.LocalFiberIrcColors
 import kotlinx.coroutines.launch
 
@@ -29,6 +36,8 @@ internal fun sessionDetail(s: LoginSession, active: String): String {
  * Settings → Login Sessions (ports `LoginSessionsViewController`): every browser or app signed in to the account
  * (GET /api/me/sessions); swipe a row, or tap its End Session button, to sign it out
  * (DELETE /api/me/sessions/<ref>) — never the current one.
+ * Details use the full row width; current-device labels and actions stack instead
+ * of squeezing long addresses or large accessibility text into a narrow column.
  */
 @Composable
 fun LoginSessionsScreen(api: SiteApi, onBack: () -> Unit) {
@@ -80,17 +89,25 @@ fun LoginSessionsScreen(api: SiteApi, onBack: () -> Unit) {
                 rows = sessions.map { s ->
                     {
                         SwipeActionRow("Sign Out", c.error, enabled = !s.current, onSwipe = { confirmSignOut(s) }) {
-                            SettingsRow(
-                                title = UserAgentSummary.label(s.userAgent),
-                                subtitle = sessionDetail(s, relativeTime(s.lastAccess, skew)),
-                                trailing = {
-                                    if (s.current) {
-                                        Text("This Device", color = c.textSecondary, style = MaterialTheme.typography.bodySmall)
-                                    } else {
-                                        TextButton(onClick = { confirmSignOut(s) }) { Text("End Session", color = c.error) }
+                            Column(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = Grid.margin, vertical = Grid.gutter),
+                                verticalArrangement = Arrangement.spacedBy(Grid.unit),
+                            ) {
+                                Text(UserAgentSummary.label(s.userAgent), color = c.chatText, style = MaterialTheme.typography.bodyLarge)
+                                if (s.current) {
+                                    Text("This Device", color = c.accent, style = MaterialTheme.typography.labelMedium)
+                                }
+                                Text(
+                                    sessionDetail(s, relativeTime(s.lastAccess, skew)),
+                                    color = c.textSecondary,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                                if (!s.current) {
+                                    TextButton(onClick = { confirmSignOut(s) }, modifier = Modifier.align(Alignment.End)) {
+                                        Text("End Session", color = c.error)
                                     }
-                                },
-                            )
+                                }
+                            }
                         }
                     }
                 },

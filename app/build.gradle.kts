@@ -12,8 +12,8 @@ android {
         applicationId = "com.kevinpostal.fiberirc"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.0.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Opt-in live tests (`@LiveE2e`) stay out of a plain connectedDebugAndroidTest, and TestLab's `testlab` argument
         // narrows a run to its selection; see androidTest LiveE2e.kt and tools/testlab/android.py.
@@ -44,24 +44,21 @@ android {
         buildConfig = true
     }
 
-    // Local sideload key (outside the repo); CI/other machines fall back to the debug key. Mirrors
-    // vanlife/android/app/build.gradle.kts:104-121.
+    // Release variants require the existing upgrade-compatible key; never fall back to a debug signature.
     val sideloadKeystore = file(System.getProperty("user.home") + "/.android/fiberirc-release.jks")
     signingConfigs {
         create("release") {
-            if (sideloadKeystore.exists()) {
-                storeFile = sideloadKeystore
-                storePassword = "fiberirc-release"
-                keyAlias = "fiberirc"
-                keyPassword = "fiberirc-release"
-            }
+            storeFile = sideloadKeystore
+            storePassword = "fiberirc-release"
+            keyAlias = "fiberirc"
+            keyPassword = "fiberirc-release"
         }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName(if (sideloadKeystore.exists()) "release" else "debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
@@ -98,6 +95,32 @@ tasks.configureEach {
     }
 }
 
+tasks.register("writeUpdateManifest") {
+    dependsOn("assembleRelease")
+    val applicationId = checkNotNull(android.defaultConfig.applicationId)
+    val versionCode = checkNotNull(android.defaultConfig.versionCode)
+    val versionName = checkNotNull(android.defaultConfig.versionName)
+    val minSdk = checkNotNull(android.defaultConfig.minSdk)
+    val apk = layout.buildDirectory.file("outputs/apk/release/app-release.apk")
+    val manifest = layout.buildDirectory.file("outputs/updates/android-update.json")
+    inputs.properties(mapOf("applicationId" to applicationId, "versionCode" to versionCode,
+        "versionName" to versionName, "minSdk" to minSdk))
+    inputs.file(apk)
+    outputs.file(manifest)
+    doLast {
+        check(versionCode > 0 && minSdk > 0) { "Update versionCode and minSdk must be positive." }
+        check(Regex("[0-9]+(\\.[0-9]+)*").matches(versionName)
+            && versionName.split('.').all { it.toLongOrNull() != null }) { "Invalid numeric update versionName." }
+        check(Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+").matches(applicationId)) {
+            "Invalid update applicationId."
+        }
+        check(apk.get().asFile.isFile) { "Signed release APK is missing." }
+        val output = manifest.get().asFile
+        output.parentFile.mkdirs()
+        output.writeText("""{"applicationId":"$applicationId","versionCode":$versionCode,"versionName":"$versionName","minSdk":$minSdk}""" + "\n")
+    }
+}
+
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
@@ -114,6 +137,7 @@ dependencies {
     implementation(libs.firebase.messaging)
     implementation(libs.sentry.android)
     implementation(libs.play.services.auth.blockstore)
+    implementation(libs.play.app.update)
     implementation(libs.okhttp)
     implementation(libs.okio)
     implementation(libs.coil.compose)

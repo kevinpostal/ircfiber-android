@@ -1,5 +1,8 @@
 package com.kevinpostal.fiberirc.ui.shell
 
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
@@ -7,11 +10,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -42,6 +47,8 @@ import com.kevinpostal.fiberirc.ui.chat.ComposerBar
 import com.kevinpostal.fiberirc.ui.chat.ComposerCompletion
 import com.kevinpostal.fiberirc.ui.chat.ComposerSend
 import com.kevinpostal.fiberirc.ui.chat.CompletionSuggestion
+import com.kevinpostal.fiberirc.ui.chat.CompletionKind
+import com.kevinpostal.fiberirc.ui.chat.applyCompletion
 import com.kevinpostal.fiberirc.ui.chat.insertMention
 import com.kevinpostal.fiberirc.ui.chat.insertReply
 import com.kevinpostal.fiberirc.ui.media.LogExportDialog
@@ -69,7 +76,12 @@ class BufferComposerActions(
  * replies inside a thread, `/paste` and the long-text snippet offer, `/list` as the channel browser, the upload
  * sheet and the gear menu ([BufferActionSheet]). The whole-message style comes from [DeviceSettingsStore]; a
  * styled send resets it when Clear Formatting After Sending is on.
+ *
+ * Bare nicknames open after two code points and 250 ms idle, then refilter immediately. Picking preserves the
+ * token's following words and keyboard; Return sends the literal draft. Focus/IME dismissal and buffer/thread
+ * changes cancel automatic opening. Hardware Tab keeps its synchronous snapshot, even with suggestions disabled.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun BufferComposer(
     shown: ShownBuffer,
@@ -97,7 +109,23 @@ fun BufferComposer(
     /** The edit the send in progress carries (only its first line edits). */
     var sendingEdit by remember(buffer, thread) { mutableStateOf<String?>(null) }
     val completion = remember(buffer, thread) { ComposerCompletion() }
+    var completionRevision by remember(buffer, thread) { mutableLongStateOf(-1) }
     val fieldFocus = remember { FocusRequester() }
+    var inputFocused by remember { mutableStateOf(false) }
+    var automaticNickVisible by remember(buffer, thread) { mutableStateOf(false) }
+    val showSuggestions = controller.effective(BufferPrefsStore.Key.NICK_SUGGESTIONS, client, buffer)
+    val imeVisible = WindowInsets.isImeVisible
+    var previouslyVisibleIme by remember { mutableStateOf(imeVisible) }
+    var automaticDismissed by remember { mutableStateOf(false) }
+    LaunchedEffect(imeVisible) {
+        if (previouslyVisibleIme && !imeVisible) {
+            automaticDismissed = true
+            automaticNickVisible = false
+        } else if (imeVisible) {
+            automaticDismissed = false
+        }
+        previouslyVisibleIme = imeVisible
+    }
 
     var gearOpen by remember { mutableStateOf(false) }
     var uploading by remember { mutableStateOf(false) }
@@ -111,11 +139,57 @@ fun BufferComposer(
         val channels = client.buffers.filter { it.kind == IrcBufferKind.CHANNEL }.map { it.name }
         Completion.suggestions(w, buffer, channels, client.nick, Completion.recentSenders(buffer.lines))
     }
+    val latestSuggest by rememberUpdatedState(suggest)
+    fun bareWord(v: TextFieldValue): Completion.Word? =
+        Completion.word(v.text, v.selection.start)?.takeIf { it.word.first() !in "/@#&:" }
+    fun automaticEligible(v: TextFieldValue): Boolean {
+        val word = bareWord(v) ?: return false
+        return inputFocused && !automaticDismissed && showSuggestions && v.selection.collapsed && v.composition == null &&
+            word.word.codePointCount(0, word.word.length) >= 2
+    }
+
+    // Keep the synchronous engine available to hardware Tab; only automatic presentation waits.
+    // A visible automatic row refilters immediately. Never refresh a manual Tab snapshot on roster changes.
+    LaunchedEffect(buffer, thread, value.text, value.selection, value.composition, inputFocused,
+        showSuggestions, automaticDismissed, revision, completion.suggestions, completion.selection) {
+        if (completion.selection != null) {
+            automaticNickVisible = false
+            return@LaunchedEffect
+        }
+        if (!automaticEligible(value)) {
+            automaticNickVisible = false
+            return@LaunchedEffect
+        }
+        if (completionRevision != revision || completion.range == null) {
+            completion.refresh(value, latestSuggest)
+            completionRevision = revision
+        }
+        if (completion.suggestions.isEmpty()) {
+            automaticNickVisible = false
+            return@LaunchedEffect
+        }
+        if (automaticNickVisible) return@LaunchedEffect
+        val openingDraft = value
+        delay(250)
+        if (value != openingDraft || !automaticEligible(value) || completion.selection != null) return@LaunchedEffect
+        completion.refresh(value, latestSuggest)
+        completionRevision = revision
+        automaticNickVisible = completion.suggestions.isNotEmpty()
+    }
+
+    val visibleSuggestions = when {
+        !inputFocused || value.composition != null || !value.selection.collapsed -> emptyList()
+        completion.selection != null -> completion.suggestions
+        bareWord(value) != null -> if (automaticEligible(value) && automaticNickVisible) completion.suggestions else emptyList()
+        Completion.word(value.text, value.selection.start)?.word?.firstOrNull()?.let { it in "@#&:" } == true -> completion.suggestions
+        else -> emptyList()
+    }
 
     /** The field's new value: the draft follows it, and typing is shared while it holds a message. */
     fun setText(new: TextFieldValue) {
         val old = value
         value = new
+        if (!automaticEligible(new)) automaticNickVisible = false
         if (thread == null) buffer.draft = new.text
         if (old.text == new.text) return
         if (new.text.isEmpty()) {
@@ -130,8 +204,12 @@ fun BufferComposer(
 
     fun edit(new: TextFieldValue) {
         val old = value
+        if (old.text != new.text || old.selection != new.selection) automaticDismissed = false
         setText(new)
         completion.onEdit(old, new, suggest)
+        if (old.composition != new.composition) completion.refresh(new, suggest)
+        if (old.text != new.text || old.selection != new.selection || old.composition != new.composition) completionRevision = revision
+        if (completion.suggestions.isEmpty()) automaticNickVisible = false
     }
 
     /** Clear Formatting After Sending: a styled send moves the style to "last" and starts over unstyled. */
@@ -233,11 +311,40 @@ fun BufferComposer(
             sendingEdit = null
         },
         style = device.composeStyle,
-        suggestions = completion.suggestions,
+        suggestions = visibleSuggestions,
         selectedSuggestion = completion.selection,
-        onTabCycle = { completion.tab(value, suggest)?.let(::setText) },
-        onPickSuggestion = { s -> setText(completion.pick(value, s, suggest)) },
-        showSuggestions = controller.effective(BufferPrefsStore.Key.NICK_SUGGESTIONS, client, buffer),
+        onTabCycle = {
+            automaticNickVisible = false
+            if (value.composition == null) completion.tab(value, suggest)?.let(::setText)
+        },
+        onPickSuggestion = { s ->
+            if (value.composition == null) {
+                val automaticPick = automaticNickVisible && completion.selection == null && bareWord(value) != null && s.kind == CompletionKind.NICK
+                automaticNickVisible = false
+                if (automaticPick) {
+                    val start = completion.range?.first ?: s.replaceRange.first
+                    var end = value.selection.start
+                    while (end < value.text.length) {
+                        val ch = value.text[end]
+                        if (ch == '\u0085' || (ch.isWhitespace() && ch !in '\u001C'..'\u001F')) break
+                        end++
+                    }
+                    if (s.insertText.endsWith(" ") && value.text.getOrNull(end) == ' ') end++
+                    val out = applyCompletion(value, start until end, s.insertText)
+                    setText(out)
+                    completion.refresh(out, suggest)
+                } else {
+                    setText(completion.pick(value, s, suggest))
+                }
+                fieldFocus.requestFocus()
+            }
+        },
+        showSuggestions = showSuggestions,
+        onInputFocusChange = { focused ->
+            inputFocused = focused
+            if (focused) automaticDismissed = false
+            if (!focused) automaticNickVisible = false
+        },
         onStyleChange = { s -> deps.deviceSettings.update { it.copy(composeStyle = s) } },
         onUploadClick = {
             focus.clearFocus()

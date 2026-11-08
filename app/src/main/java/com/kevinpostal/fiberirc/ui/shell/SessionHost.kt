@@ -208,6 +208,7 @@ private fun RouteScreen(
             notificationPolicy = deps.notificationPolicy,
             blockList = deps.blockList,
             sessionActions = sessionActions,
+            appUpdates = deps.appUpdates,
             onClose = pop,
             start = route.start,
         )

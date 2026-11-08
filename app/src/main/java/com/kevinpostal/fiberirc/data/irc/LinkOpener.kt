@@ -38,14 +38,16 @@ object LinkOpener {
         }
     }
 
-    /** `ACTION_VIEW`: the system browser or the app that handles the link. */
-    fun openExternally(context: Context, url: String) {
+    /** `ACTION_VIEW`, without a package-visibility preflight. Other link callers deliberately ignore failure. */
+    fun openExternally(context: Context, url: String): Boolean {
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
         if (context !is android.app.Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        try {
+        return try {
             context.startActivity(intent)
+            true
         } catch (_: ActivityNotFoundException) {
             runCatching { Log.w(TAG, "No app opens a ${Uri.parse(url).scheme} link") }
+            false
         }
     }
 }

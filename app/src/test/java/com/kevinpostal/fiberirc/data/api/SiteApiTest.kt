@@ -1,18 +1,29 @@
 package com.kevinpostal.fiberirc.data.api
 
 import com.kevinpostal.fiberirc.data.prefs.MemoryPrefs
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import okhttp3.Cookie
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.SocketPolicy
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.io.IOException
+import java.net.URLDecoder
+import java.util.concurrent.TimeUnit
 
 class SiteApiTest {
     private lateinit var server: MockWebServer
@@ -204,5 +215,212 @@ class SiteApiTest {
         assertEquals(20L, error.currentPolicy()!!.rev)
         // A 409 without a JSON body stays a plain failure.
         assertEquals(SiteApiError.Server(409), SiteApiError.failure(409, "nope"))
+    }
+
+    // MARK: Signup
+
+    private fun formFields(body: String): Map<String, String> = body.split('&').associate { pair ->
+        val (k, v) = pair.split('=', limit = 2)
+        URLDecoder.decode(k, "UTF-8") to URLDecoder.decode(v, "UTF-8")
+    }
+
+    private fun watchSet(value: String) = "${SiteApi.SIGNUP_WATCH_COOKIE}=$value; Max-Age=86400; Path=/; HttpOnly; SameSite=Lax"
+
+    @Test
+    fun registerWatchThenVerifiedStartsTheSession() = runTest {
+        server.enqueue(
+            MockResponse().setResponseCode(202).addHeader("Set-Cookie", watchSet("w1"))
+                .setBody("""{"status":"verification_sent","email":"k@e.x"}"""),
+        )
+        val password = " pw +é& "
+        val r = api.register("kev", "k@e.x", password, "en-US,fr")
+        assertEquals(SignupResult.VerificationSent("k@e.x"), r)
+        val post = server.takeRequest()
+        assertEquals("POST", post.method)
+        assertEquals("/register", post.path)
+        // Sent as typed: the server, not the client, trims and validates.
+        assertEquals(
+            mapOf("username" to "kev", "email" to "k@e.x", "password" to password, "langs" to "en-US,fr"),
+            formFields(post.body.readUtf8()),
+        )
+        assertTrue(api.hasSignupWatch())
+
+        server.enqueue(MockResponse().setBody("""{"state":"pending"}"""))
+        assertEquals(SignupWatchState.Pending, api.signupStatus().getOrThrow())
+        val poll = server.takeRequest()
+        assertEquals("GET", poll.method)
+        assertEquals("/register/status", poll.path)
+        assertEquals("${SiteApi.SIGNUP_WATCH_COOKIE}=w1", poll.getHeader("Cookie"))
+        assertTrue(api.hasSignupWatch())
+
+        server.enqueue(
+            MockResponse().setBody("""{"state":"verified","next":"/register/continue"}""")
+                .addHeader("Set-Cookie", "${SiteApi.SIGNUP_WATCH_COOKIE}=; Max-Age=0; Path=/")
+                .addHeader("Set-Cookie", "vibe.session_id=s1; Max-Age=3600; Path=/; HttpOnly"),
+        )
+        assertEquals(SignupWatchState.Verified, api.signupStatus().getOrThrow())
+        server.takeRequest()
+        assertFalse(api.hasSignupWatch())
+        // `next` is never navigated: the next call is the caller's own /api/me with the new session.
+        server.enqueue(MockResponse().setBody(meJson))
+        assertEquals("kev", api.me().getOrThrow().username)
+        val me = server.takeRequest()
+        assertEquals("/api/me", me.path)
+        assertEquals("vibe.session_id=s1", me.getHeader("Cookie"))
+        assertEquals(4, server.requestCount)
+    }
+
+    @Test
+    fun registerRedirectSignsInThroughMe() = runTest {
+        server.enqueue(
+            MockResponse().setResponseCode(302).setHeader("Location", "/app")
+                .addHeader("Set-Cookie", "vibe.session_id=s2; Max-Age=3600; Path=/; HttpOnly"),
+        )
+        server.enqueue(MockResponse().setBody(meJson))
+        val r = api.register("kev", "k@e.x", "password1", "en")
+        assertEquals("kev", (r as SignupResult.SignedIn).me.username)
+        assertEquals("/register", server.takeRequest().path)
+        val me = server.takeRequest()
+        assertEquals("/api/me", me.path)
+        assertEquals("vibe.session_id=s2", me.getHeader("Cookie"))
+        assertEquals(2, server.requestCount)
+        assertFalse(api.hasSignupWatch())
+    }
+
+    @Test
+    fun registerRedirectWithoutSessionIsNotSignedIn() = runTest {
+        server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "/"))
+        server.enqueue(MockResponse().setResponseCode(401).setBody("""{"error":"Unauthorized"}"""))
+        val r = api.register("kev", "k@e.x", "password1", "en")
+        assertEquals(SignupResult.Failure(SiteApiError.Unauthorized), r)
+    }
+
+    @Test
+    fun registerRejectionsKeepCodeAndNickAndNeverConflict() = runTest {
+        val taken = """{"error":"The nickname \"kev\" is already registered","code":"nick_registered","params":{"nick":"kev"}}"""
+        server.enqueue(MockResponse().setResponseCode(409).setBody(taken))
+        val nick = (api.register("kev", "k@e.x", "password1", "en") as SignupResult.Failure).error
+        assertEquals(SiteApiError.Rejected(409, "nick_registered", "The nickname \"kev\" is already registered", "kev"), nick)
+        assertFalse(nick is SiteApiError.Conflict)
+        assertEquals("The nickname \"kev\" is already registered", nick.message)
+
+        server.enqueue(MockResponse().setResponseCode(409).setBody("""{"error":"Taken","code":"username_taken"}"""))
+        assertEquals(
+            SiteApiError.Rejected(409, "username_taken", "Taken", null),
+            (api.register("kev", "k@e.x", "password1", "en") as SignupResult.Failure).error,
+        )
+        server.enqueue(MockResponse().setResponseCode(429).setBody("""{"error":"Wait","code":"verification_cooldown"}"""))
+        assertEquals(
+            SiteApiError.Rejected(429, "verification_cooldown", "Wait", null),
+            (api.register("kev", "k@e.x", "password1", "en") as SignupResult.Failure).error,
+        )
+        server.enqueue(MockResponse().setResponseCode(503).setBody("<html>down</html>"))
+        assertEquals(SiteApiError.Server(503), (api.register("kev", "k@e.x", "password1", "en") as SignupResult.Failure).error)
+        // No rejection bootstraps a session: only the four POSTs reached the server.
+        assertEquals(4, server.requestCount)
+        assertEquals(SiteApiError.Server(409), SiteApiError.registration(409, """{"error":""}"""))
+    }
+
+    @Test
+    fun registerAcceptanceIsStrict() = runTest {
+        for (body in listOf(
+            """{"status":"ok","email":"k@e.x"}""",
+            """{"status":"verification_sent","email":""}""",
+            """{"status":"verification_sent"}""",
+            """{"email":"k@e.x"}""",
+            "not json",
+        )) {
+            server.enqueue(MockResponse().setResponseCode(202).setBody(body))
+            assertEquals(body, SignupResult.Failure(SiteApiError.Malformed), api.register("kev", "k@e.x", "password1", "en"))
+        }
+    }
+
+    @Test
+    fun registerForgetsOnlyThePreviousWatch() = runTest {
+        val site = server.url("/")
+        jar.saveFromResponse(site, listOfNotNull(Cookie.parse(site, watchSet("old")), Cookie.parse(site, "vibe.session_id=s; Max-Age=3600; Path=/")))
+        assertTrue(api.hasSignupWatch())
+        // Accepted, but the server could not start a watch: no stale watch may pass for this attempt's.
+        server.enqueue(MockResponse().setResponseCode(202).setBody("""{"status":"verification_sent","email":"k@e.x"}"""))
+        assertEquals(SignupResult.VerificationSent("k@e.x"), api.register("kev", "k@e.x", "password1", "en"))
+        assertEquals("vibe.session_id=s", server.takeRequest().getHeader("Cookie"))
+        assertFalse(api.hasSignupWatch())
+        assertEquals(listOf("vibe.session_id"), jar.loadForRequest(site).map { it.name })
+    }
+
+    @Test
+    fun signupStatusIsStrict() = runTest {
+        server.enqueue(MockResponse().setBody("""{"state":"gone"}"""))
+        assertEquals(SignupWatchState.Gone, api.signupStatus().getOrThrow())
+        for (body in listOf("""{"state":"done"}""", """{"state":null}""", "{}", "[]", "nope")) {
+            server.enqueue(MockResponse().setBody(body))
+            assertEquals(body, SiteApiError.Malformed, api.signupStatus().exceptionOrNull())
+        }
+        server.enqueue(MockResponse().setResponseCode(502).setBody("""{"error":"Bad gateway"}"""))
+        assertEquals(SiteApiError.Server(502), api.signupStatus().exceptionOrNull())
+        server.enqueue(MockResponse().setResponseCode(429))
+        assertEquals(SiteApiError.Server(429), api.signupStatus().exceptionOrNull())
+    }
+
+    @Test
+    fun forgetSignupWatchKeepsSessionAndOtherCookies() {
+        val prefs = MemoryPrefs()
+        val store = CookieJarStore(prefs)
+        val https = SiteApi(OkHttpClient.Builder().followRedirects(false).cookieJar(store).build(), "https://ircfiber.com")
+        val site = "https://ircfiber.com/register".toHttpUrl()
+        val other = "https://example.org/".toHttpUrl()
+        store.saveFromResponse(
+            site,
+            listOfNotNull(
+                Cookie.parse(site, "${SiteApi.SIGNUP_WATCH_COOKIE}=w; Max-Age=86400; Path=/; Secure; HttpOnly; SameSite=Lax"),
+                Cookie.parse(site, "vibe.session_id=s; Max-Age=3600; Path=/; Secure; HttpOnly"),
+            ),
+        )
+        store.saveFromResponse(other, listOfNotNull(Cookie.parse(other, "${SiteApi.SIGNUP_WATCH_COOKIE}=x; Max-Age=3600")))
+        assertTrue(https.hasSignupWatch())
+
+        https.forgetSignupWatch()
+        assertFalse(https.hasSignupWatch())
+        assertEquals(listOf("vibe.session_id"), store.loadForRequest(site).map { it.name })
+        assertEquals(listOf("x"), store.loadForRequest(other).map { it.value })
+        // The deletion is persisted: a new process cannot resurrect the watch.
+        assertEquals(listOf("vibe.session_id"), CookieJarStore(prefs).loadForRequest(site).map { it.name })
+        // Nothing to forget is a no-op.
+        https.forgetSignupWatch()
+        assertEquals(listOf("vibe.session_id"), store.loadForRequest(site).map { it.name })
+    }
+
+    @Test
+    fun registerTransportFailureIsThrownNotWrapped() = runTest {
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AT_START))
+        val thrown = try {
+            api.register("kev", "k@e.x", "password1", "en")
+            null
+        } catch (e: IOException) {
+            e
+        }
+        assertNotNull(thrown)
+    }
+
+    @Test
+    fun cancelledRegisterIsNotAFailure() = runTest {
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+        var outcome: SignupResult? = null
+        val job = launch(Dispatchers.IO) { outcome = api.register("kev", "k@e.x", "password1", "en") }
+        assertNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+        job.cancelAndJoin()
+        assertTrue(job.isCancelled)
+        assertNull(outcome)
+    }
+
+    @Test
+    fun cancelledStatusPollThrowsCancellation() = runTest {
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+        var outcome: Result<SignupWatchState>? = null
+        val job = launch(Dispatchers.IO) { outcome = api.signupStatus() }
+        assertNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+        job.cancelAndJoin()
+        assertTrue(job.isCancelled)
+        assertNull(outcome)
     }
 }

@@ -1,8 +1,18 @@
 package com.kevinpostal.fiberirc.ui.settings
 
+import android.app.Activity
 import android.app.Application
+import android.app.Instrumentation
 import android.content.Context
+import android.content.Intent
+import android.os.Build
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertHasClickAction
+import androidx.compose.ui.test.assertHasNoClickAction
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -36,6 +46,21 @@ import com.kevinpostal.fiberirc.support.FakeSiteServer
 import com.kevinpostal.fiberirc.support.fakePolicyViewJson
 import com.kevinpostal.fiberirc.support.TestSession
 import com.kevinpostal.fiberirc.ui.theme.FiberIrcTheme
+import com.kevinpostal.fiberirc.BuildConfig
+import com.google.android.play.core.appupdate.AppUpdateManager
+import com.kevinpostal.fiberirc.data.update.ApkRelease
+import com.kevinpostal.fiberirc.data.update.ApkReleaseUnavailableException
+import com.kevinpostal.fiberirc.data.update.AppUpdates
+import com.kevinpostal.fiberirc.data.update.PlayUpdateFlow
+import com.kevinpostal.fiberirc.data.update.UpdateChannel
+import com.kevinpostal.fiberirc.data.update.UpdateState
+import com.kevinpostal.fiberirc.ui.update.UpdateNoticeHost
+import com.kevinpostal.fiberirc.ui.update.UpdateTags
+import com.kevinpostal.fiberirc.ui.update.UpdateTexts
+import java.util.concurrent.CopyOnWriteArrayList
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.cancel
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import okhttp3.mockwebserver.MockResponse
@@ -53,7 +78,9 @@ import org.junit.runner.RunWith
 /**
  * Drives the real [SettingsFlow] (root list + every screen it pushes, unmodified production code) over a
  * [TestSession]: the real `Deps` stores and [com.kevinpostal.fiberirc.ui.shell.SessionActions], with ircfiber.com
- * replaced by a [FakeSiteServer]. Navigation is by real taps from the Settings root.
+ * replaced by a [FakeSiteServer]. Navigation is by real taps from the Settings root. The real [UpdateNoticeHost] is
+ * mounted over it, as in `FiberIrcRoot`, with an [AppUpdates] on its own preferences whose APK channel answers
+ * from [apkLookup] (no network; automatic checks off).
  */
 @RunWith(AndroidJUnit4::class)
 class SettingsE2eTest {
@@ -67,6 +94,23 @@ class SettingsE2eTest {
     private lateinit var server: FakeSiteServer
     private val app = ApplicationProvider.getApplicationContext<Application>()
     private var closed = false
+
+    private val updatesPrefs = app.getSharedPreferences(UPDATES_PREFS_FILE, Context.MODE_PRIVATE)
+    private val updatesScope = MainScope()
+
+    /** What the APK channel's release lookup returns (or throws) for the next check. */
+    private var apkLookup: suspend () -> ApkRelease = { throw ApkReleaseUnavailableException("no release scripted") }
+    private val updates = AppUpdates(
+        prefs = updatesPrefs,
+        scope = updatesScope,
+        automaticChecks = false,
+        installedVersionCode = INSTALLED_CODE,
+        sdkInt = Build.VERSION.SDK_INT,
+        resolveChannel = { UpdateChannel.APK },
+        playManager = lazy<AppUpdateManager> { error("APK installs never bind Play") },
+        apkLookup = { apkLookup() },
+    )
+    private val playUpdateFlow = PlayUpdateFlow(updates)
 
     private val settings = ConnectionSettings(
         nick = "tester",
@@ -85,29 +129,36 @@ class SettingsE2eTest {
                 "displayPrefs":{"displayPrefsSet":true,"showTimestamps":true,"showUserIcons":true},"highlightWords":[]}""",
         )
         server.on("GET", "/api/me/irc-account", body = """{"status":"ready","account":"tester","password":"x"}""")
+        updatesPrefs.edit().clear().commit()
     }
 
     @After
     fun tearDown() {
         server.shutdown()
+        updatesScope.cancel()
+        updatesPrefs.edit().clear().commit()
     }
 
     private fun launch(me: Me = Me(id = "u1", username = "tester")): TestSession {
         val session = TestSession(app, server, listOf(settings), me)
         compose.setContent {
             FiberIrcTheme {
-                SettingsFlow(
-                    api = session.deps.api,
-                    baseUrl = server.baseUrl,
-                    accountSettings = session.deps.accountSettings,
-                    deviceSettings = session.deps.deviceSettings,
-                    displaySettings = session.deps.displaySettings,
-                    notificationPrefs = session.deps.notificationPrefs,
-                    notificationPolicy = session.deps.notificationPolicy,
-                    blockList = session.deps.blockList,
-                    sessionActions = session.sessionActions,
-                    onClose = { closed = true },
-                )
+                Box(Modifier.fillMaxSize()) {
+                    SettingsFlow(
+                        api = session.deps.api,
+                        baseUrl = server.baseUrl,
+                        accountSettings = session.deps.accountSettings,
+                        deviceSettings = session.deps.deviceSettings,
+                        displaySettings = session.deps.displaySettings,
+                        notificationPrefs = session.deps.notificationPrefs,
+                        notificationPolicy = session.deps.notificationPolicy,
+                        blockList = session.deps.blockList,
+                        sessionActions = session.sessionActions,
+                        appUpdates = updates,
+                        onClose = { closed = true },
+                    )
+                    UpdateNoticeHost(updates, playUpdateFlow)
+                }
             }
         }
         // The profile row turns into the username once GET /api/me answered (and the account stores loaded it).
@@ -378,5 +429,121 @@ class SettingsE2eTest {
         } finally {
             policy.reset()
         }
+    }
+
+    /**
+     * Check for updates (after Version): while the shared check runs only that row is disabled and says so; the
+     * root host offers the newer pinned APK release. Later keeps it available (the row still says so) and records
+     * the per-release suppression; a manual recheck ignores it and offers again, and Update hands exactly the
+     * versioned asset URL to an external app, leaving the release available.
+     */
+    @Test
+    fun checkForUpdatesLaterKeepsReleaseAndUpdateOpensPinnedApk() {
+        val release = CompletableDeferred<ApkRelease>()
+        apkLookup = { release.await() }
+        launch()
+        scrollTo(UpdateTexts.CHECK_TITLE)
+        val row = compose.onNodeWithTag(CHECK_FOR_UPDATES_TAG)
+        row.assertHasClickAction()
+        // Version keeps showing the installed build beside the new action.
+        compose.onNodeWithText("${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})").assertExists()
+
+        row.performClick()
+        waitForText("Checking…")
+        row.assertHasNoClickAction()
+        // Only the check waits: the other footer actions stay available.
+        compose.onNode(hasText("Export Diagnostics") and hasClickAction()).assertExists()
+
+        release.complete(ApkRelease(NEWER_CODE, "1.0.2", 26, PINNED_APK_URL))
+        waitForText(UpdateTexts.AVAILABLE_TITLE)
+        compose.onNodeWithText("IRC Fiber 1.0.2 is available.").assertExists()
+        compose.onNodeWithText(UpdateTexts.APK_GUIDANCE).assertExists()
+        compose.onNodeWithTag(UpdateTags.LATER).performClick()
+        waitForNoUpdateDialog()
+        assertTrue(updates.state.value is UpdateState.Available)
+        assertNull(updates.notice.value)
+        assertEquals("apk:$NEWER_CODE", updatesPrefs.getString(AppUpdates.KEY_LAST_OFFERED_RELEASE, null))
+        waitForText("Version 1.0.2 available")
+        row.assertHasClickAction()
+
+        // A manual recheck ignores the suppression and offers the same release again.
+        val monitor = ExternalViewMonitor()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.addMonitor(monitor)
+        try {
+            row.performClick()
+            waitForText(UpdateTexts.AVAILABLE_TITLE)
+            compose.onNodeWithTag(UpdateTags.PRIMARY).assert(hasText(UpdateTexts.UPDATE)).performClick()
+            compose.waitUntil(timeoutMillis = 5_000) { monitor.intents.isNotEmpty() }
+            assertEquals(PINNED_APK_URL, monitor.intents.single().dataString)
+            waitForNoUpdateDialog()
+            assertNull(updates.notice.value)
+            assertTrue(updates.state.value is UpdateState.Available)
+            assertEquals("apk:$NEWER_CODE", updatesPrefs.getString(AppUpdates.KEY_LAST_OFFERED_RELEASE, null))
+        } finally {
+            instrumentation.removeMonitor(monitor)
+        }
+    }
+
+    /**
+     * Every manual outcome answers in the root host and the row's status: the same code is up to date, a failed
+     * lookup is not "up to date", and a newer release needing a newer Android has no Update action.
+     */
+    @Test
+    fun checkForUpdatesReportsUpToDateFailureAndRequiresOs() {
+        apkLookup = { ApkRelease(INSTALLED_CODE, "1.0.1", 26, PINNED_APK_URL) }
+        launch()
+        scrollTo(UpdateTexts.CHECK_TITLE)
+        val row = compose.onNodeWithTag(CHECK_FOR_UPDATES_TAG)
+
+        row.performClick()
+        waitForText(UpdateTexts.UP_TO_DATE)
+        compose.onNodeWithTag(UpdateTags.LATER).assertDoesNotExist()
+        compose.onNodeWithTag(UpdateTags.PRIMARY).assert(hasText(UpdateTexts.OK)).performClick()
+        waitForNoUpdateDialog()
+        waitForText("Up to date")
+
+        apkLookup = { throw ApkReleaseUnavailableException("offline") }
+        row.performClick()
+        waitForText(UpdateTexts.CHECK_FAILED)
+        compose.onNodeWithText(UpdateTexts.UP_TO_DATE).assertDoesNotExist()
+        compose.onNodeWithTag(UpdateTags.PRIMARY).performClick()
+        waitForNoUpdateDialog()
+        waitForText("Couldn't check")
+
+        apkLookup = { ApkRelease(NEWER_CODE, "1.0.2", Build.VERSION.SDK_INT + 1, PINNED_APK_URL) }
+        row.performClick()
+        waitForText(UpdateTexts.REQUIRES_OS)
+        compose.onNodeWithText(UpdateTexts.UPDATE).assertDoesNotExist()
+        compose.onNodeWithTag(UpdateTags.LATER).assertDoesNotExist()
+        compose.onNodeWithTag(UpdateTags.PRIMARY).assert(hasText(UpdateTexts.OK)).performClick()
+        waitForNoUpdateDialog()
+        waitForText("Needs newer Android")
+        assertTrue(updates.state.value is UpdateState.RequiresOs)
+    }
+
+    private fun waitForNoUpdateDialog() {
+        compose.waitUntil(timeoutMillis = 5_000) {
+            compose.onAllNodes(hasTestTag(UpdateTags.DIALOG)).fetchSemanticsNodes().isEmpty()
+        }
+    }
+
+    /** Captures and blocks `ACTION_VIEW` starts from this process, so no browser opens during the test. */
+    private class ExternalViewMonitor : Instrumentation.ActivityMonitor() {
+        val intents = CopyOnWriteArrayList<Intent>()
+
+        override fun onStartActivity(intent: Intent): Instrumentation.ActivityResult? {
+            if (intent.action != Intent.ACTION_VIEW) return null
+            intents += intent
+            return Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null)
+        }
+    }
+
+    private companion object {
+        const val UPDATES_PREFS_FILE = "app_updates_settings_e2e"
+        const val INSTALLED_CODE = 2
+        const val NEWER_CODE = 3
+        const val PINNED_APK_URL =
+            "https://github.com/kevinpostal/ircfiber-pages/releases/download/android-v1.0.2/ircfiber-android.apk"
     }
 }

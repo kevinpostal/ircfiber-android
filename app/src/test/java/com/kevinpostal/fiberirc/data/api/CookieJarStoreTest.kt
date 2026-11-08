@@ -45,4 +45,21 @@ class CookieJarStoreTest {
         assertTrue(jar.loadForRequest(url).isEmpty())
         assertEquals(1, jar.loadForRequest(other).size)
     }
+
+    @Test
+    fun expiredCopyDeletesOnlyThatCookie() {
+        val prefs = MemoryPrefs()
+        val jar = CookieJarStore(prefs) { now }
+        val other = "https://example.org/".toHttpUrl()
+        jar.saveFromResponse(url, listOf(cookie("s", 3600), Cookie.parse(url, "watch=w; Max-Age=3600; Path=/; Secure; HttpOnly")!!))
+        jar.saveFromResponse(other, listOf(Cookie.parse(other, "watch=x; Max-Age=3600")!!))
+        // Same name, domain and path, already expired: what SiteApi.forgetSignupWatch saves.
+        val watch = jar.loadForRequest(url).single { it.name == "watch" }
+        val expired = Cookie.Builder().name(watch.name).value("").expiresAt(0L).path(watch.path)
+            .hostOnlyDomain(watch.domain).secure().httpOnly().build()
+        jar.saveFromResponse(url, listOf(expired))
+        assertEquals(listOf("vibe.session_id"), jar.loadForRequest(url).map { it.name })
+        assertEquals(listOf("x"), jar.loadForRequest(other).map { it.value })
+        assertEquals(listOf("vibe.session_id"), CookieJarStore(prefs) { now }.loadForRequest(url).map { it.name })
+    }
 }

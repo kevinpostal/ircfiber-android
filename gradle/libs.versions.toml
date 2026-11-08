@@ -20,6 +20,7 @@ zxing = "3.5.3"
 credentials = "1.5.0"
 firebaseBom = "35.1.0"
 blockstore = "16.4.0"
+appUpdate = "2.1.0"
 sentryAndroid = "8.41.0"
 junit = "4.13.2"
 androidxTestExt = "1.3.0"
@@ -49,6 +50,7 @@ compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-mani
 firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.ref = "firebaseBom" }
 firebase-messaging = { group = "com.google.firebase", name = "firebase-messaging" }
 play-services-auth-blockstore = { group = "com.google.android.gms", name = "play-services-auth-blockstore", version.ref = "blockstore" }
+play-app-update = { group = "com.google.android.play", name = "app-update", version.ref = "appUpdate" }
 sentry-android = { group = "io.sentry", name = "sentry-android", version.ref = "sentryAndroid" }
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 okio = { group = "com.squareup.okio", name = "okio", version.ref = "okio" }

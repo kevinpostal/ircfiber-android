@@ -14,6 +14,7 @@ uitest-failed:
 	$(TESTLAB) android --tier failed
 
 # ONLY is a regex over Class#method ids; $(value …) keeps a trailing `$` anchor that make would otherwise expand away.
+# Sessions layout + confirmation: make uitest-only ONLY='LoginSessionsLayoutTest' (320dp, 200% text).
 uitest-only:
 	$(TESTLAB) android --only '$(value ONLY)'
 

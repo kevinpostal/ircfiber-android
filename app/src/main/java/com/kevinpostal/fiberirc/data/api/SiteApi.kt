@@ -17,6 +17,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import okhttp3.Call
 import okhttp3.Callback
+import okhttp3.Cookie
 import okhttp3.FormBody
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -50,6 +51,13 @@ sealed class SiteApiError(message: String) : Exception(message) {
             ?: "Changed elsewhere — try again",
     )
 
+    /**
+     * A POST /register rejection, `{"error","code","params"}` (`apiErrorBody`): [text] is the server's explanation,
+     * [code] its stable reason (`username_taken`, `nick_registered`, `verification_cooldown`, …) and [nick] its
+     * `params.nick`. Never a [Conflict]: a registration 409 is a taken name, not a preference revision.
+     */
+    data class Rejected(val status: Int, val code: String?, val text: String, val nick: String?) : SiteApiError(text)
+
     companion object {
         /** `{"error": "…"}` bodies become [Message] so the user sees the server's explanation (`serverError`). */
         fun serverError(code: Int, body: String): SiteApiError {
@@ -58,6 +66,15 @@ sealed class SiteApiError(message: String) : Exception(message) {
                     ?.takeIf { it.isString }?.contentOrNull
             }.getOrNull()
             return if (!text.isNullOrEmpty()) Message(text) else Server(code)
+        }
+
+        /** Non-2xx/3xx answers of POST /register: [Rejected] when the body explains itself, else [Server]. */
+        fun registration(status: Int, body: String): SiteApiError {
+            val obj = runCatching { SiteJson.parseToJsonElement(body) as? JsonObject }.getOrNull() ?: return Server(status)
+            val text = obj.string("error")
+            if (text.isNullOrEmpty()) return Server(status)
+            val params = obj["params"] as? JsonObject
+            return Rejected(status, obj.string("code")?.takeIf { it.isNotEmpty() }, text, params?.string("nick")?.takeIf { it.isNotEmpty() })
         }
 
         /**
@@ -81,6 +98,30 @@ sealed class SiteApiError(message: String) : Exception(message) {
 sealed interface LoginResult {
     data class Success(val me: Me) : LoginResult
     data class Failure(val error: Throwable) : LoginResult
+}
+
+/**
+ * POST /register outcome: the confirmation email went out to [VerificationSent.email] (the
+ * `ircfiber_signup_watch` cookie, when the server could start one, is in the jar — see [SiteApi.hasSignupWatch]);
+ * the server created the account and signed in at once (verification off, 302 + session cookie); or the server's
+ * [SiteApiError]. Transport failures are thrown as `IOException`, not wrapped.
+ */
+sealed interface SignupResult {
+    data class VerificationSent(val email: String) : SignupResult
+    data class SignedIn(val me: Me) : SignupResult
+    data class Failure(val error: SiteApiError) : SignupResult
+}
+
+/** GET /register/status `state`. Unknown states are [SiteApiError.Malformed], never a default. */
+enum class SignupWatchState(val wire: String) {
+    Pending("pending"),
+    Verified("verified"),
+    Gone("gone"),
+    ;
+
+    companion object {
+        fun fromWire(state: String): SignupWatchState? = entries.firstOrNull { it.wire == state }
+    }
 }
 
 /**
@@ -158,6 +199,69 @@ class SiteApi(private val client: OkHttpClient, val baseUrl: String) {
             400, 401 -> throw SiteApiError.Unauthorized
             else -> throw SiteApiError.Server(a.code)
         }
+    }
+
+    // MARK: Signup
+
+    /**
+     * POST /register (form, `Accept: application/json` from the header interceptor). First forgets any earlier
+     * signup watch, so after [SignupResult.VerificationSent] [hasSignupWatch] reflects this answer alone. 202 must
+     * be `{status:"verification_sent", email}` with a nonempty email, else [SiteApiError.Malformed]. Any other
+     * 2xx/3xx (302 when verification is off) is resolved through [me]; its `Location` is never followed. Errors are
+     * [SiteApiError.registration]. Only [SiteApiError]s become [SignupResult.Failure]; transport `IOException`s and
+     * coroutine cancellation propagate. The password is sent unchanged and never logged or kept.
+     */
+    suspend fun register(username: String, email: String, password: String, langs: String): SignupResult = try {
+        forgetSignupWatch()
+        val form = FormBody.Builder()
+            .add("username", username)
+            .add("email", email)
+            .add("password", password)
+            .add("langs", langs)
+            .build()
+        val a = send(Request.Builder().url(url("register")).post(form).build())
+        when (a.code) {
+            202 -> {
+                val obj = decodeObject(a.body)
+                val sentTo = obj.string("email")
+                if (obj.string("status") != "verification_sent" || sentTo.isNullOrBlank()) throw SiteApiError.Malformed
+                SignupResult.VerificationSent(sentTo)
+            }
+            in 200 until 400 -> SignupResult.SignedIn(me().getOrThrow())
+            else -> throw SiteApiError.registration(a.code, a.body)
+        }
+    } catch (e: SiteApiError) {
+        SignupResult.Failure(e)
+    }
+
+    /**
+     * GET /register/status with the watch cookie. `verified` consumes the watch and starts the session (the
+     * browser-only `next` is ignored). A non-200 is [SiteApiError.Server] with its status (5xx = retryable);
+     * a missing or unknown `state` is [SiteApiError.Malformed].
+     */
+    suspend fun signupStatus(): Result<SignupWatchState> = attempt {
+        val a = send(get(url("register", "status")))
+        if (a.code != 200) throw SiteApiError.Server(a.code)
+        val state = decodeObject(a.body).string("state")
+        state?.let(SignupWatchState::fromWire) ?: throw SiteApiError.Malformed
+    }
+
+    /** Whether the jar holds an unexpired `ircfiber_signup_watch` cookie for this site's base URL (root path). */
+    fun hasSignupWatch(): Boolean = client.cookieJar.loadForRequest(base).any { it.name == SIGNUP_WATCH_COOKIE }
+
+    /**
+     * Forgets only the signup watch: saves an already-expired copy (same name, domain and path) of each one sent to
+     * the base URL, which the jar treats as a deletion. The session and every other cookie stay.
+     */
+    fun forgetSignupWatch() {
+        val expired = client.cookieJar.loadForRequest(base).filter { it.name == SIGNUP_WATCH_COOKIE }.map { c ->
+            Cookie.Builder().name(c.name).value("").expiresAt(0L).path(c.path)
+                .apply { if (c.hostOnly) hostOnlyDomain(c.domain) else domain(c.domain) }
+                .apply { if (c.secure) secure() }
+                .apply { if (c.httpOnly) httpOnly() }
+                .build()
+        }
+        if (expired.isNotEmpty()) client.cookieJar.saveFromResponse(base, expired)
     }
 
     // MARK: Bootstrap
@@ -315,6 +419,8 @@ class SiteApi(private val client: OkHttpClient, val baseUrl: String) {
 
     companion object {
         const val TAG = "FiberIRC.api"
+        /** The cookie POST /register's 202 sets; GET /register/status reads (and on `verified`/`gone` clears) it. */
+        const val SIGNUP_WATCH_COOKIE = "ircfiber_signup_watch"
         private val JSON = "application/json".toMediaType()
     }
 }
@@ -329,6 +435,9 @@ fun <T> Result<JsonElement>.decodeAs(strategy: DeserializationStrategy<T>): Resu
         throw SiteApiError.Malformed
     }
 }
+
+/** A string member of a JSON object; null when absent or not a string. */
+private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
 
 /** `runCatching` that lets coroutine cancellation through. */
 internal inline fun <T> attempt(block: () -> T): Result<T> = try {

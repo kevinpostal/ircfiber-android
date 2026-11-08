@@ -16,6 +16,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kevinpostal.fiberirc.data.Deps
 import com.kevinpostal.fiberirc.data.irc.ConnectionSettings
@@ -28,6 +29,8 @@ import com.kevinpostal.fiberirc.ui.shell.SessionActions
 import com.kevinpostal.fiberirc.ui.shell.SessionHost
 import com.kevinpostal.fiberirc.ui.theme.FiberIrcTheme
 import com.kevinpostal.fiberirc.ui.theme.LocalFiberIrcColors
+import com.kevinpostal.fiberirc.ui.update.UpdateNoticeHost
+import kotlinx.coroutines.launch
 
 /**
  * Root activity: the sign-in flow until the process's session ([Deps.session]) exists, then the signed-in shell
@@ -43,9 +46,15 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         // Passkey sheets (encryption backup/unlock) present over this activity; released on its destroy.
         deps.passkeys.attach(this)
+        deps.playUpdateFlow.attach(this)
         // A recreated activity's launch intent was already handled.
         if (savedInstanceState == null) AppRouter.handle(intent)
         setContent { FiberIrcRoot(deps) }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        lifecycleScope.launch { deps.appUpdates.onForeground() }
     }
 
     /** `fiberirc://auth` → the login screen; buffer, `irc(s)://` and `/irc/…` App Links → the session. */
@@ -75,6 +84,7 @@ private fun FiberIrcRoot(deps: Deps) {
                     SessionHost(deps, screen.manager, actions)
                 }
             }
+            UpdateNoticeHost(deps.appUpdates, deps.playUpdateFlow)
         }
     }
 }

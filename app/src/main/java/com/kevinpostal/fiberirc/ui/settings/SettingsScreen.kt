@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.PrivacyTip
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SettingsInputAntenna
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.Icon
@@ -47,6 +48,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -67,6 +69,9 @@ import com.kevinpostal.fiberirc.data.prefs.NotificationPolicyStore
 import com.kevinpostal.fiberirc.data.prefs.NotificationPrefsStore
 import com.kevinpostal.fiberirc.ui.shell.SessionActions
 import com.kevinpostal.fiberirc.ui.encryption.EncryptionSettingsScreen
+import com.kevinpostal.fiberirc.data.update.AppUpdates
+import com.kevinpostal.fiberirc.data.update.UpdateState
+import com.kevinpostal.fiberirc.ui.update.UpdateTexts
 import com.kevinpostal.fiberirc.data.e2ee.E2eeServiceState
 import com.kevinpostal.fiberirc.ui.theme.Appearance
 import com.kevinpostal.fiberirc.ui.theme.Brand
@@ -76,6 +81,7 @@ import com.kevinpostal.fiberirc.ui.theme.LocalFiberIrcColors
 import com.kevinpostal.fiberirc.ui.theme.nickColor
 import kotlinx.coroutines.launch
 import java.text.Normalizer
+import kotlin.math.roundToInt
 
 /** Every Settings screen, for [SettingsFlow]'s back stack. */
 enum class SettingsRoute { ROOT, ACCOUNT, CHANGE_PASSWORD, SESSIONS, BOUNCER, THIS_DEVICE, DISPLAY, NOTIFICATIONS, HIGHLIGHTS, BLOCKED, ENCRYPTION }
@@ -96,6 +102,8 @@ fun SettingsFlow(
     notificationPolicy: NotificationPolicyStore,
     blockList: BlockListStore,
     sessionActions: SessionActions,
+    /** Shared app-update checker: Check for updates runs a manual check; the root notice host shows its result. */
+    appUpdates: AppUpdates,
     onClose: () -> Unit,
     /** The first screen: Settings' root, or one screen pushed over it (Back still returns to the root). */
     start: SettingsRoute = SettingsRoute.ROOT,
@@ -108,7 +116,7 @@ fun SettingsFlow(
     when (stack.last()) {
         SettingsRoute.ROOT -> SettingsScreen(
             api, baseUrl, accountSettings, deviceSettings, displaySettings, notificationPrefs, notificationPolicy, blockList,
-            sessionActions, onNavigate = push, onClose = pop,
+            sessionActions, appUpdates, onNavigate = push, onClose = pop,
         )
         SettingsRoute.ACCOUNT -> AccountScreen(api, onChangePassword = { push(SettingsRoute.CHANGE_PASSWORD) }, onBack = pop)
         SettingsRoute.CHANGE_PASSWORD -> ChangePasswordScreen(api, baseUrl, openLinksInApp(), onBack = pop)
@@ -165,6 +173,7 @@ private enum class FooterItem(val title: String, val icon: ImageVector?) {
     PRIVACY("Privacy Policy", Icons.Filled.PrivacyTip),
     DIAGNOSTICS("Export Diagnostics", Icons.Filled.Share),
     VERSION("Version", null),
+    CHECK_FOR_UPDATES(UpdateTexts.CHECK_TITLE, Icons.Filled.SystemUpdate),
 }
 
 private sealed interface Profile {
@@ -188,7 +197,8 @@ private fun fold(s: String): String =
 /**
  * Settings root (ports `SettingsViewController`): a search field, the profile row (→ Account once signed in), a
  * colour-coded grid of destination tiles, a footer list (Contact Support, Terms of Use, Privacy Policy, Export
- * Diagnostics, Version) and the destructive list (Sign Out, Delete Account…).
+ * Diagnostics, Version, Check for updates) and the destructive list (Sign Out, Delete Account…). Check for updates
+ * only starts the shared manual check and shows its status; `UpdateNoticeHost` presents the outcome.
  */
 @Composable
 fun SettingsScreen(
@@ -201,6 +211,7 @@ fun SettingsScreen(
     notificationPolicy: NotificationPolicyStore,
     blockList: BlockListStore,
     sessionActions: SessionActions,
+    appUpdates: AppUpdates,
     onNavigate: (SettingsRoute) -> Unit,
     onClose: () -> Unit,
 ) {
@@ -216,6 +227,8 @@ fun SettingsScreen(
     val appearance by displaySettings.appearance.collectAsStateWithLifecycle()
     val highlightWords by accountSettings.highlightWords.collectAsStateWithLifecycle()
     val masks by blockList.masks.collectAsStateWithLifecycle()
+    val updateChecking by appUpdates.checking.collectAsStateWithLifecycle()
+    val updateState by appUpdates.state.collectAsStateWithLifecycle()
 
     // Re-read on appear and on return from system settings, where the user may have turned notifications on.
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
@@ -260,6 +273,8 @@ fun SettingsScreen(
                     .onFailure { alerts.show("Couldn't export diagnostics", it) }
             }
             FooterItem.VERSION -> Unit
+            // The caller's scope only waits: the shared check outlives Settings and the root host shows the result.
+            FooterItem.CHECK_FOR_UPDATES -> scope.launch { appUpdates.check(manual = true) }
         }
     }
 
@@ -338,12 +353,23 @@ fun SettingsScreen(
                 key = "footer",
                 rows = footerItems.map { item ->
                     {
-                        SettingsRow(
-                            title = item.title,
-                            leading = item.icon?.let { icon -> { Icon(icon, contentDescription = null, tint = c.link) } },
-                            value = if (item == FooterItem.VERSION) "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})" else null,
-                            onClick = if (item == FooterItem.VERSION || busy) null else ({ select(item) }),
-                        )
+                        if (item == FooterItem.CHECK_FOR_UPDATES) {
+                            SettingsRow(
+                                title = item.title,
+                                modifier = Modifier.testTag(CHECK_FOR_UPDATES_TAG),
+                                leading = { Icon(Icons.Filled.SystemUpdate, contentDescription = null, tint = c.link) },
+                                value = updateStatus(updateChecking, updateState),
+                                // A running check disables only this action.
+                                onClick = if (updateChecking || busy) null else ({ select(item) }),
+                            )
+                        } else {
+                            SettingsRow(
+                                title = item.title,
+                                leading = item.icon?.let { icon -> { Icon(icon, contentDescription = null, tint = c.link) } },
+                                value = if (item == FooterItem.VERSION) "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})" else null,
+                                onClick = if (item == FooterItem.VERSION || busy) null else ({ select(item) }),
+                            )
+                        }
                     }
                 },
             )
@@ -390,6 +416,25 @@ fun SettingsScreen(
     }
     ConfirmDialog(confirmation) { confirmation = null }
     ErrorDialog(alerts)
+}
+
+/** Test tag of the Check for updates row (iOS `settings.checkForUpdates`). */
+const val CHECK_FOR_UPDATES_TAG = "settings.checkForUpdates"
+
+/** The Check for updates row's status, from the shared update state. */
+private fun updateStatus(checking: Boolean, state: UpdateState): String? = when {
+    checking -> "Checking…"
+    else -> when (state) {
+        UpdateState.Idle, UpdateState.Checking -> null
+        UpdateState.UpToDate -> "Up to date"
+        is UpdateState.Available ->
+            state.release.versionName?.let { "Version $it available" } ?: "Build ${state.release.versionCode} available"
+        is UpdateState.Downloading -> state.progress?.let { "Downloading ${(it * 100).roundToInt()}%" } ?: "Downloading…"
+        is UpdateState.Downloaded -> "Ready to install"
+        is UpdateState.Installing -> "Installing…"
+        is UpdateState.RequiresOs -> "Needs newer Android"
+        UpdateState.Unavailable -> "Couldn't check"
+    }
 }
 
 /** A colour-coded destination tile: icon badge, title, current-state value. */
