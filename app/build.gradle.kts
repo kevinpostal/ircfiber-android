@@ -12,8 +12,8 @@ android {
         applicationId = "com.kevinpostal.fiberirc"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 3
+        versionName = "1.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Opt-in live tests (`@LiveE2e`) stay out of a plain connectedDebugAndroidTest, and TestLab's `testlab` argument
         // narrows a run to its selection; see androidTest LiveE2e.kt and tools/testlab/android.py.
