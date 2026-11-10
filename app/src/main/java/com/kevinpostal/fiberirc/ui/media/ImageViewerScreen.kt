@@ -21,6 +21,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Column
+import com.kevinpostal.fiberirc.ui.shell.LocalVoiceOverlay
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -97,7 +99,10 @@ fun ImageViewerScreen(url: String, source: String, media: MediaApi, onClose: () 
         onDismissRequest = onClose,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
-        ImageViewerContent(url, source, media, onClose, onDelete)
+        Column(Modifier.fillMaxSize()) {
+            Box(Modifier.weight(1f)) { ImageViewerContent(url, source, media, onClose, onDelete) }
+            LocalVoiceOverlay.current?.invoke()
+        }
     }
 }
 

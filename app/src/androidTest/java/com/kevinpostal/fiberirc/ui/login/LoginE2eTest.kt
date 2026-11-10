@@ -26,7 +26,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.kevinpostal.fiberirc.data.api.SiteApi
-import com.kevinpostal.fiberirc.data.irc.ConnectionSettings
+import com.kevinpostal.fiberirc.data.SessionStart
 import com.kevinpostal.fiberirc.data.prefs.DeviceSettingsStore
 import com.kevinpostal.fiberirc.support.FakeSignup
 import com.kevinpostal.fiberirc.support.FakeSiteServer
@@ -107,12 +107,12 @@ class LoginE2eTest {
         InstrumentationRegistry.getInstrumentation().runOnMainSync { store.clear() }
     }
 
-    private fun host(vm: LoginViewModel, onSession: (List<ConnectionSettings>) -> Unit = {}) {
+    private fun host(vm: LoginViewModel, onSession: (SessionStart) -> Unit = {}) {
         compose.setContent { LoginScreen(viewModel = vm, baseUrl = server.baseUrl, onSession = onSession) }
     }
 
     /** Hosts [first] in a slot a test can empty or refill with a later view model (a relaunch). */
-    private fun hostSwappable(first: LoginViewModel, onSession: (List<ConnectionSettings>) -> Unit): MutableState<LoginViewModel?> {
+    private fun hostSwappable(first: LoginViewModel, onSession: (SessionStart) -> Unit): MutableState<LoginViewModel?> {
         val slot = mutableStateOf<LoginViewModel?>(first)
         compose.setContent {
             slot.value?.let { vm -> key(vm) { LoginScreen(viewModel = vm, baseUrl = server.baseUrl, onSession = onSession) } }
@@ -191,7 +191,7 @@ class LoginE2eTest {
         server.on("GET", "/api/me/bouncer", body = """{"enabled":false,"host":"","port":0,"tls":false,"username":""}""")
         server.on("GET", "/api/me/irc-account", body = """{"status":"ready","account":"carol","password":"x"}""")
         appPrefs.edit().putBoolean(LoginViewModel.KEY_ACCEPTED_TERMS, true).commit()
-        var connected: List<ConnectionSettings>? = null
+        var connected: SessionStart? = null
         val vm = viewModel("Connections stopped", resumeStoredSession = false)
         host(vm) { connected = it }
 
@@ -204,7 +204,8 @@ class LoginE2eTest {
         compose.onNodeWithText("Password").performTextInput("password")
         compose.onNodeWithText("Sign in").performClick()
         compose.waitUntil(timeoutMillis = 5_000) { connected != null }
-        assertEquals("carol", connected!![0].nick)
+        assertEquals("carol", connected!!.connections[0].nick)
+        assertEquals("u1", connected!!.account?.id)
     }
 
     /** Password sign-in, Community Guidelines accepted, bouncer disabled → direct-ircd settings reach [onSession]. */
@@ -212,7 +213,7 @@ class LoginE2eTest {
     fun passwordSignInAcceptsGuidelinesAndConnects() {
         server.defaultsSignedOut()
         server.defaultsPasswordLogin(fakeMeJson(username = "alice"))
-        var connected: List<ConnectionSettings>? = null
+        var connected: SessionStart? = null
         val vm = viewModel()
         host(vm) { connected = it }
         waitForForm(vm)
@@ -226,8 +227,9 @@ class LoginE2eTest {
         compose.onNodeWithText("Agree").performClick()
 
         compose.waitUntil(timeoutMillis = 5_000) { connected != null }
-        assertEquals(1, connected!!.size)
-        assertEquals("alice", connected!![0].nick)
+        assertEquals(1, connected!!.connections.size)
+        assertEquals("alice", connected!!.connections[0].nick)
+        assertEquals("u1", connected!!.account?.id)
         assertTrue(
             "Agreeing should persist acceptance",
             appPrefs.getBoolean(LoginViewModel.KEY_ACCEPTED_TERMS, false),
@@ -239,7 +241,7 @@ class LoginE2eTest {
     fun decliningGuidelinesReturnsToSignIn() {
         server.defaultsSignedOut()
         server.defaultsPasswordLogin(fakeMeJson())
-        var connected: List<ConnectionSettings>? = null
+        var connected: SessionStart? = null
         val vm = viewModel()
         host(vm) { connected = it }
         waitForForm(vm)
@@ -284,12 +286,13 @@ class LoginE2eTest {
         server.on("POST", "/api/me/irc-account/retry")
         // Community Guidelines already accepted on a prior install for this scenario.
         appPrefs.edit().putBoolean(LoginViewModel.KEY_ACCEPTED_TERMS, true).commit()
-        var connected: List<ConnectionSettings>? = null
+        var connected: SessionStart? = null
         val vm = viewModel()
         host(vm) { connected = it }
 
         compose.waitUntil(timeoutMillis = 5_000) { connected != null }
-        assertEquals("carol", connected!![0].nick)
+        assertEquals("carol", connected!!.connections[0].nick)
+        assertEquals("u1", connected!!.account?.id)
     }
 
     // MARK: Native signup
@@ -302,7 +305,7 @@ class LoginE2eTest {
     fun signupWaitsForEmailThenContinuesThroughGuidelinesOnce() {
         val script = server.defaultsSignup(fakeMeJson(username = "newbie", email = "new@example.test"))
         val sessions = AtomicInteger()
-        var connected: List<ConnectionSettings>? = null
+        var connected: SessionStart? = null
         val vm = viewModel()
         host(vm) { connected = it; sessions.incrementAndGet() }
 
@@ -329,7 +332,8 @@ class LoginE2eTest {
         script.state = "verified"
         tapCheck(vm)
         agreeAndExpectOneSession(vm, sessions)
-        assertEquals("newbie", connected!![0].nick)
+        assertEquals("newbie", connected!!.connections[0].nick)
+        assertEquals("u1", connected!!.account?.id)
         assertTrue(appPrefs.getBoolean(LoginViewModel.KEY_ACCEPTED_TERMS, false))
     }
 
@@ -357,7 +361,7 @@ class LoginE2eTest {
         server.defaultsSignup(fakeMeJson(username = "newbie"))
         val taken = "That username is already taken"
         server.on("POST", "/register", code = 409, body = """{"error":"$taken","code":"username_taken","params":{"nick":"newbie"}}""")
-        var connected: List<ConnectionSettings>? = null
+        var connected: SessionStart? = null
         val vm = viewModel()
         host(vm) { connected = it }
 
@@ -414,7 +418,7 @@ class LoginE2eTest {
     @Test
     fun editDetailsCancelsInFlightCheckAndIgnoresLateVerification() {
         val script = server.defaultsSignup(fakeMeJson(username = "newbie"))
-        var connected: List<ConnectionSettings>? = null
+        var connected: SessionStart? = null
         val vm = viewModel()
         host(vm) { connected = it }
         signUpAndWait(vm, script)
@@ -492,7 +496,7 @@ class LoginE2eTest {
     fun goneWithoutSessionOffersManualSignIn() {
         val script = server.defaultsSignup(fakeMeJson(username = "newbie"))
         script.state = "gone"
-        var connected: List<ConnectionSettings>? = null
+        var connected: SessionStart? = null
         val vm = viewModel()
         host(vm) { connected = it }
 

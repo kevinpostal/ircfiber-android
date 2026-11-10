@@ -43,6 +43,45 @@ class PushPayloadTest {
     }
 
     @Test
+    fun parsesOwnershipPrivacyAndDeliveryMetadataThroughActionRoundTrip() {
+        val wire = data() + mapOf(
+            "userId" to "account-7",
+            "apiOrigin" to "https://irc.example:8443",
+            "preview" to "sender",
+            "eventId" to "event-9",
+            "groupId" to "window-2",
+            "silent" to "true",
+        )
+        val p = PushPayload.parse(wire)!!
+        assertEquals("account-7", p.userId)
+        assertEquals("https://irc.example:8443", p.apiOrigin)
+        assertEquals("sender", p.preview)
+        assertEquals("event-9", p.eventId)
+        assertEquals("window-2", p.groupId)
+        assertTrue(p.silent)
+        val actionData = p.toData().filterKeys { it in PushPayload.KEYS }
+        assertEquals("true", actionData["silent"])
+        assertEquals(p, PushPayload.parse(actionData))
+        assertFalse(PushPayload.parse(wire + ("silent" to "false"))!!.silent)
+        assertEquals("none", PushPayload.parse(wire + ("preview" to "none"))!!.preview)
+    }
+
+    @Test
+    fun legacyPayloadKeepsDisplayDefaultsWithoutAcquiringOwnership() {
+        val p = PushPayload.parse(data())!!
+        assertEquals("", p.userId)
+        assertEquals("", p.apiOrigin)
+        assertEquals("", p.eventId)
+        assertEquals("", p.groupId)
+        assertEquals("full", p.preview)
+        assertFalse(p.silent)
+        val restored = PushPayload.parse(p.toData())!!
+        assertEquals("", restored.userId)
+        assertEquals("", restored.apiOrigin)
+        assertEquals("false", restored.toData()["silent"])
+    }
+
+    @Test
     fun rejectsUnknownCategoryOrMissingRouting() {
         assertNull(PushPayload.parse(data(category = "other")))
         assertNull(PushPayload.parse(data(sender = "")))

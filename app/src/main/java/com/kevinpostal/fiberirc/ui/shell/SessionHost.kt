@@ -5,6 +5,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Column
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -66,6 +69,7 @@ private sealed interface SessionRoute {
     data class Search(val client: IrcClient, val buffer: IrcBuffer) : SessionRoute
     data object BlockedUsers : SessionRoute
     data class ConversationEncryption(val client: IrcClient, val buffer: IrcBuffer) : SessionRoute
+    data class Audio(val roomId: String? = null) : SessionRoute
 }
 
 /**
@@ -97,12 +101,20 @@ fun SessionHost(deps: Deps, manager: IrcSessionManager, sessionActions: SessionA
                     routes += SessionRoute.Settings(SettingsRoute.ENCRYPTION)
                 }
             },
+            voice = deps.voice,
+            openAudio = { id -> routes += SessionRoute.Audio(id) },
         )
     }
     val controller = rememberShellController(
         manager, deps.api, deps.accountStores, deps.deviceSettings, deps.shareTargets, navigation,
     )
 
+    val voiceState by deps.voice.state.collectAsState()
+    LaunchedEffect(voiceState.openAudio) {
+        if (voiceState.openAudio) { routes += SessionRoute.Audio(); deps.voice.audioOpened() }
+    }
+    VoicePermissionHost(deps.voice)
+    CompositionLocalProvider(LocalVoiceOverlay provides { VoiceDock(deps.voice) { routes += SessionRoute.Audio() } }) {
     // Pushes for the buffer on screen stay quiet; each resume (the first included) registers this install's token.
     val activity = context as? ComponentActivity
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -166,7 +178,8 @@ fun SessionHost(deps: Deps, manager: IrcSessionManager, sessionActions: SessionA
         },
     )
 
-    Box(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize()) {
+    Box(Modifier.weight(1f)) {
         ShellScreen(controller, deps.api, deps.accountStores, deps.deviceSettings, slots)
         val route = routes.lastOrNull()
         if (route != null) {
@@ -177,6 +190,8 @@ fun SessionHost(deps: Deps, manager: IrcSessionManager, sessionActions: SessionA
             }
         }
     }
+    VoiceDock(deps.voice) { routes += SessionRoute.Audio() }
+    }
     viewer?.let { v -> ImageViewerScreen(v.url, v.source, deps.media, onClose = { viewer = null }) }
     EncryptionSessionHost(
         manager = manager,
@@ -186,6 +201,7 @@ fun SessionHost(deps: Deps, manager: IrcSessionManager, sessionActions: SessionA
         sessionActions = sessionActions,
         openEncryptionSettings = { navigation.encryptionSettings() },
     )
+    }
 }
 
 @Composable
@@ -198,6 +214,7 @@ private fun RouteScreen(
 ) {
     val context = LocalContext.current
     when (route) {
+        is SessionRoute.Audio -> VoiceAudioScreen(deps.voice, deps.apiBaseUrl, route.roomId, pop)
         is SessionRoute.Settings -> SettingsFlow(
             api = deps.api,
             baseUrl = deps.apiBaseUrl,

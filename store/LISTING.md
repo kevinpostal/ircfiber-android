@@ -79,6 +79,15 @@ Other notes for the form:
 - Android deep Doze can still restrict network access. Existing liveness probes and reconnect handling recover when access returns; this is not a battery-optimization exemption or a guarantee against force-stop.
 - TCP connection and TLS handshake attempts time out after 15 seconds each. TLS shutdown runs off the UI thread. After ten failed automatic reconnects, retries pause until the app returns to the foreground, a network path returns, or the user taps the disconnected server title; an explicit user disconnect remains stopped.
 
+## Native Audio source (not a released or device-qualified claim)
+- Audio uses authenticated website account IDs, independently of IRC networks. Previewing a room does not join it. Explicit Join starts a separate media-playback foreground service and connects muted without creating a microphone.
+- Only explicit Unmute requests microphone permission and promotes microphone foreground ownership before server-authorized publication. Mute, deafen, interruption, leave and account loss stop/unpublish/dispose owned tracks; undeafen/reconnect do not unmute. SDK microphone prewarming and silent communication-mode playback are disabled.
+- `data/voice/VoiceRoomOwner.kt` owns media across activity recreation and text/settings/viewer navigation. `VoiceConnectionService.kt` supplies generation-bound notification and real MediaSession controls. Android may hide lock-screen controls when notification permissions/privacy settings disallow them; first unqualified background unmute opens Audio instead of starting hidden capture.
+- Audio is transport-encrypted through a trusted SFU, not MLS end-to-end encryption. No recording, camera, screen or data-chat grants are used. Connected Bluetooth selection needs Bluetooth Connect on Android 12+, never scan/location permission.
+- Verified source checks: debug APK assembly, 23 voice behavioral unit checks and Android-test Kotlin compilation passed. `make uitest-only ONLY='Voice'` passed three tests on isolated managed API-35 emulators. The merged manifest contains the separate non-exported `microphone|mediaPlayback` service and no unused projection service. All packaged arm64-v8a/x86_64 native libraries have at least 16-KB ELF load alignment; `zipalign -c -P 16 4` passed for the debug APK.
+- Release remains gated on signed-artifact inspection, real source-matched SFU audio and consented physical Android background/lock-screen/route/interruption/foreground-service testing with separate-network peers. A physical Android/tester is unavailable. Emulator proof does not qualify physical media or release signing; no upload or production activation is implied.
+
+
 ## App signing
 - App signing and upload key: `~/.android/fiberirc-release.jks`, alias `fiberirc`. Back up the keystore securely; Google can reset an upload key, but losing the local signing key prevents independently signing compatible sideload updates.
 - With explicit owner approval, the existing key was encrypted using Google's PEPK tool and imported into Play App Signing.

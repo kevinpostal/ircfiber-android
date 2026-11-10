@@ -24,11 +24,10 @@ import com.kevinpostal.fiberirc.ui.shell.AppRouter
 import com.kevinpostal.fiberirc.ui.theme.notificationFill
 
 /**
- * Turns each ircfiber.com push into a conversation notification (Android's equivalent of the iOS Notification
- * Service extension's communication notification): a message from its sender with the sender's letter avatar, one
- * notification per buffer ([PushPayload.threadId], also the conversation shortcut id), a channel shown as a named
- * group conversation. `buffer_msg` offers Reply (sent by [PushReplyReceiver] without opening the app when the buffer
- * is positively unencrypted, else kept as a sealed draft that continues in the app), `channel_invite` offers Join;
+ * Full previews are conversation notifications with sender avatars and retained MessagingStyle history.
+ * Redacted previews use only the server's title/body, never previous history or conversation enrichment.
+ * `buffer_msg` offers Reply (sent by [PushReplyReceiver] without opening the app when the buffer is positively
+ * unencrypted, else kept as a sealed draft that continues in the app), `channel_invite` offers Join;
  * tapping opens the buffer.
  */
 internal object PushNotifications {
@@ -63,37 +62,45 @@ internal object PushNotifications {
     fun post(context: Context, p: PushPayload, reply: CharSequence? = null, quiet: Boolean = false) {
         val nm = NotificationManagerCompat.from(context)
         if (!nm.areNotificationsEnabled()) return
-        val me = Person.Builder().setName(p.ownNick.ifEmpty { "Me" }).apply { if (p.ownNick.isNotEmpty()) setKey(p.ownNick) }.build()
-        val sender = Person.Builder()
-            .setName(p.sender)
-            .setIcon(letterAvatar(p.sender))
-            .setKey("${p.networkId}:${p.sender}")
-            .build()
-        val style = existingStyle(context, p.threadId) ?: NotificationCompat.MessagingStyle(me)
-        style.conversationTitle = if (p.isChannel) p.buffer else null
-        style.isGroupConversation = p.isChannel
         val time = p.timeMs.takeIf { it > 0 } ?: System.currentTimeMillis()
-        val text = p.messageText
-        val known = style.messages.any { it.timestamp == time && it.text?.toString() == text && it.person?.key == sender.key }
-        if (!known) style.addMessage(text, time, sender)
-        if (reply != null) style.addMessage(reply, System.currentTimeMillis(), null as Person?)
-
         val open = openIntent(context, p)
         val builder = NotificationCompat.Builder(context, p.category)
             .setSmallIcon(android.R.drawable.stat_notify_chat)
-            .setStyle(style)
-            .setContentTitle(p.title.ifEmpty { p.sender })
-            .setContentText(text)
-            .setSubText(p.subtitle.ifEmpty { null })
-            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-            .setShortcutId(p.threadId)
-            .setLocusId(LocusIdCompat(p.threadId))
             .setContentIntent(open)
             .setAutoCancel(true)
             .setNumber(p.badge)
             .setWhen(time)
             .setShowWhen(true)
             .setOnlyAlertOnce(reply != null || quiet)
+            .setSilent(p.silent || quiet || reply != null)
+        if (p.preview == "full") {
+            val me = Person.Builder().setName(p.ownNick.ifEmpty { "Me" })
+                .apply { if (p.ownNick.isNotEmpty()) setKey(p.ownNick) }.build()
+            val sender = Person.Builder()
+                .setName(p.sender)
+                .setIcon(letterAvatar(p.sender))
+                .setKey("${p.networkId}:${p.sender}")
+                .build()
+            val style = existingStyle(context, p.threadId) ?: NotificationCompat.MessagingStyle(me)
+            style.conversationTitle = if (p.isChannel) p.buffer else null
+            style.isGroupConversation = p.isChannel
+            val text = p.messageText
+            val known = style.messages.any { it.timestamp == time && it.text?.toString() == text && it.person?.key == sender.key }
+            if (!known) style.addMessage(text, time, sender)
+            if (reply != null) style.addMessage(reply, System.currentTimeMillis(), null as Person?)
+            builder.setStyle(style)
+                .setContentTitle(p.title.ifEmpty { p.sender })
+                .setContentText(text)
+                .setSubText(p.subtitle.ifEmpty { null })
+                .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+                .setShortcutId(p.threadId)
+                .setLocusId(LocusIdCompat(p.threadId))
+        } else {
+            // Do not reuse the previous MessagingStyle: even its retained history and people can reveal content.
+            builder.setContentTitle(p.title)
+                .setContentText(p.body)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(p.body))
+        }
         when (p.category) {
             PushPayload.CATEGORY_BUFFER_MESSAGE -> builder.addAction(replyAction(context, p))
             PushPayload.CATEGORY_CHANNEL_INVITE -> builder.addAction(

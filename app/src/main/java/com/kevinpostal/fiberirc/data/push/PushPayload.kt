@@ -23,6 +23,13 @@ data class PushPayload(
     val threadId: String,
     val category: String,
     val badge: Int,
+    // Missing legacy ownership remains unbound; never infer it from the currently signed-in account.
+    val userId: String = "",
+    val apiOrigin: String = "",
+    val preview: String = "full",
+    val eventId: String = "",
+    val groupId: String = "",
+    val silent: Boolean = false,
 ) {
     /** A channel message or invite; a private message's buffer is its sender (the server's `isPM ? n : p[0]`). */
     val isChannel: Boolean get() = !buffer.equals(sender, ignoreCase = true)
@@ -49,6 +56,8 @@ data class PushPayload(
         "networkId" to networkId, "buffer" to buffer, "sender" to sender, "ownNick" to ownNick, "msgid" to msgid,
         "t" to t, "title" to title, "subtitle" to subtitle, "body" to body, "threadId" to threadId,
         "category" to category, "badge" to badge.toString(),
+        "userId" to userId, "apiOrigin" to apiOrigin, "preview" to preview,
+        "eventId" to eventId, "groupId" to groupId, "silent" to silent.toString(),
     )
 
     companion object {
@@ -61,7 +70,7 @@ data class PushPayload(
         /** The FCM data keys [parse] reads. */
         val KEYS = listOf(
             "networkId", "buffer", "sender", "ownNick", "msgid", "t", "title", "subtitle", "body", "threadId",
-            "category", "badge",
+            "category", "badge", "userId", "apiOrigin", "preview", "eventId", "groupId", "silent",
         )
 
         /** Null unless the category is known and `networkId`, `buffer` and `sender` are present. */
@@ -84,6 +93,12 @@ data class PushPayload(
                 threadId = data["threadId"]?.takeIf { it.isNotEmpty() } ?: ConversationShortcuts.threadId(networkId, buffer),
                 category = category,
                 badge = data["badge"]?.toIntOrNull() ?: 0,
+                userId = data["userId"].orEmpty(),
+                apiOrigin = data["apiOrigin"].orEmpty(),
+                preview = data["preview"] ?: "full",
+                eventId = data["eventId"].orEmpty(),
+                groupId = data["groupId"].orEmpty(),
+                silent = data["silent"] == "true",
             )
         }
     }

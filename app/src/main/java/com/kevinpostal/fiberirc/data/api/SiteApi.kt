@@ -169,13 +169,17 @@ class SiteApi(private val client: OkHttpClient, val baseUrl: String) {
     }
 
     /** GET /logout (answer ignored), then forgets every ircfiber.com cookie. */
+    /** Local media must stop before any credential invalidation, including direct IRC auth-failure paths. */
+    var beforeCredentialLoss: suspend () -> Unit = {}
     suspend fun logout() {
+        beforeCredentialLoss()
         attempt { send(get(url("logout"))) }
         (client.cookieJar as? CookieJarStore)?.clear(base.host)
     }
 
     /** DELETE /api/me — permanently deletes the account, then signs out like [logout]. */
     suspend fun deleteAccount(): Result<Unit> = attempt {
+        beforeCredentialLoss()
         val a = send(Request.Builder().url(url("api", "me")).delete().build())
         when (a.code) {
             200 -> Unit
@@ -342,7 +346,7 @@ class SiteApi(private val client: OkHttpClient, val baseUrl: String) {
     }
 
     /** An HTTP answer passed through as is (status and text body), for callers that parse errors themselves. */
-    class RawAnswer(val code: Int, val body: String)
+    class RawAnswer(val code: Int, val body: String, val headers: okhttp3.Headers = okhttp3.Headers.Builder().build())
 
     /**
      * One call of the encryption API (`/api` + [encodedPath], already allowlisted and percent-encoded by the
@@ -366,12 +370,12 @@ class SiteApi(private val client: OkHttpClient, val baseUrl: String) {
         val builder = Request.Builder().url(url).method(method, rb)
         for ((name, value) in headers) builder.header(name, value)
         val a = send(builder.build())
-        RawAnswer(a.code, a.body)
+        RawAnswer(a.code, a.body, a.headers)
     }
 
     // MARK: Plumbing
 
-    private class Answer(val code: Int, val body: String)
+    private class Answer(val code: Int, val body: String, val headers: okhttp3.Headers)
 
     @kotlinx.serialization.Serializable
     private class ProvidersEnvelope(val providers: List<AuthProvider>)
@@ -399,7 +403,7 @@ class SiteApi(private val client: OkHttpClient, val baseUrl: String) {
             response.code >= 500 -> log(Log.ERROR, "$method $path → ${response.code}")
             response.code >= 400 -> log(Log.WARN, "$method $path → ${response.code}")
         }
-        Answer(response.code, body)
+        Answer(response.code, body, response.headers)
     }
 
     private fun <T> decode(strategy: DeserializationStrategy<T>, body: String): T = try {

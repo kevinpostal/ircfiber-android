@@ -72,6 +72,7 @@ class SessionActions(
             if (choice == SignOutKeysChoice.CANCEL) return
             if (choice == SignOutKeysChoice.REMOVED && userId != null) forgetDrafts(service.apiOrigin, userId)
         }
+        api.beforeCredentialLoss()
         unregisterPush()
         api.logout()
         forgetAccount(service, userId)
@@ -86,6 +87,7 @@ class SessionActions(
     suspend fun deleteAccount(): Result<Unit> {
         val service = e2ee
         val userId = service?.userId
+        api.beforeCredentialLoss()
         unregisterPush()
         api.deleteAccount().onFailure { return Result.failure(it) }
         if (service != null) {

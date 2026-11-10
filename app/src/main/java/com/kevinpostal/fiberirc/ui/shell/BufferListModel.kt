@@ -10,6 +10,9 @@ import com.kevinpostal.fiberirc.data.prefs.AccountKeyListStore
  * object. Ports `BufferRow` (`ios/UI/BufferList/BufferListModel.swift`).
  */
 sealed interface BufferRow {
+    data object Audio : BufferRow
+    data class AudioRoom(val room: com.kevinpostal.fiberirc.data.voice.VoiceRoom, val expanded: Boolean) : BufferRow
+    data class AudioPerson(val roomId: String, val participant: com.kevinpostal.fiberirc.data.voice.VoiceParticipant) : BufferRow
     data object PinnedHeader : BufferRow
     class Pinned(val client: Int, val buffer: IrcBuffer) : BufferRow {
         override fun equals(other: Any?) = other is Pinned && other.client == client && other.buffer === buffer

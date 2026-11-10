@@ -27,8 +27,10 @@ androidxTestExt = "1.3.0"
 espressoCore = "3.7.0"
 androidxTestRunner = "1.7.0"
 uiautomator = "2.3.0"
+livekit = "2.30.0"
 
 [libraries]
+livekit = { group = "io.livekit", name = "livekit-android", version.ref = "livekit" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
 androidx-lifecycle-runtime-compose = { group = "androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "lifecycle" }

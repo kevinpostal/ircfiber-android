@@ -1,5 +1,7 @@
 package com.kevinpostal.fiberirc.ui.login
 
+import com.kevinpostal.fiberirc.data.SessionStart
+
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.net.Uri
@@ -62,7 +64,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.kevinpostal.fiberirc.data.irc.ConnectionSettings
 
 /**
  * First screen (ports `LoginViewController`'s layout with Material3 defaults; the theme pass applies `ui/theme`
@@ -77,7 +78,7 @@ import com.kevinpostal.fiberirc.data.irc.ConnectionSettings
 fun LoginScreen(
     viewModel: LoginViewModel,
     baseUrl: String,
-    onSession: (List<ConnectionSettings>) -> Unit,
+    onSession: (SessionStart) -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val session by viewModel.session.collectAsStateWithLifecycle()

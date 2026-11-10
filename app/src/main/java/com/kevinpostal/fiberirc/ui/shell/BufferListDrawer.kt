@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.outlined.AddBox
 import androidx.compose.material.icons.outlined.AddCircleOutline
 import androidx.compose.material.icons.outlined.IndeterminateCheckBox
@@ -94,7 +95,19 @@ fun BufferListDrawer(controller: ShellController, stores: AccountStores, modifie
     stores.networkLayout.networkOrder.collectAsState().value
     stores.bufferPrefs.values.collectAsState().value
     val infos by controller.manager.networkInfos.collectAsState()
-    val rows = controller.drawerRows()
+    val voice = controller.navigation.voice?.state?.collectAsState()?.value
+    var expandedVoice by remember { mutableStateOf<Set<String>>(emptySet()) }
+    val rows = buildList {
+        val snapshot = voice?.snapshot
+        if (snapshot != null && (snapshot.enabled || snapshot.canManage)) {
+            add(BufferRow.Audio)
+            snapshot.rooms.forEach { room ->
+                add(BufferRow.AudioRoom(room, room.id in expandedVoice))
+                if (room.id in expandedVoice) room.participants?.forEach { add(BufferRow.AudioPerson(room.id, it)) }
+            }
+        }
+        addAll(controller.drawerRows())
+    }
     val selected = controller.shownBuffer
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -129,6 +142,17 @@ fun BufferListDrawer(controller: ShellController, stores: AccountStores, modifie
     }
 
     fun content(row: BufferRow): RowContent = when (row) {
+        BufferRow.Audio -> RowContent(text = "Audio", icon = Icons.Filled.VolumeUp, minHeight = Grid.tapTarget, background = c.networkRow)
+        is BufferRow.AudioRoom -> RowContent(
+            text = row.room.name + (row.room.participantCount?.let { " · $it/${row.room.capacity}" } ?: " · Locked"),
+            icon = if (row.room.canJoin) Icons.Filled.VolumeUp else Icons.Filled.Lock, minHeight = 40.dp,
+            isCollapsed = !row.expanded,
+        )
+        is BufferRow.AudioPerson -> RowContent(
+            text = row.participant.username + if (row.participant.serverMuted) " · Server muted" else if (row.participant.sessionId in voice?.speakers.orEmpty() && row.roomId == voice?.session?.roomId) " · Speaking" else if (row.participant.muted) " · Muted" else "",
+            icon = null,
+            minHeight = 40.dp,
+        )
         BufferRow.PinnedHeader -> RowContent.header("Pinned", Icons.Filled.PushPin)
         is BufferRow.ArchivesHeader -> RowContent.header(
             "Archives",
@@ -161,6 +185,9 @@ fun BufferListDrawer(controller: ShellController, stores: AccountStores, modifie
 
     fun tapped(row: BufferRow) {
         when (row) {
+            BufferRow.Audio -> { controller.closeDrawer(); controller.navigation.openAudio(null) }
+            is BufferRow.AudioRoom -> { controller.closeDrawer(); controller.navigation.openAudio(row.room.id) }
+            is BufferRow.AudioPerson -> { controller.closeDrawer(); controller.navigation.openAudio(row.roomId) }
             BufferRow.PinnedHeader -> {}
             is BufferRow.ArchivesHeader -> controller.toggleArchives(clients[row.client].settings.networkId)
             is BufferRow.JoinChannel -> controller.promptJoinChannel(clients[row.client])
@@ -219,8 +246,10 @@ fun BufferListDrawer(controller: ShellController, stores: AccountStores, modifie
                     BufferCell(
                         content = content(row),
                         onClick = if (row == BufferRow.PinnedHeader) null else ({ tapped(row) }),
-                        onLongClick = { menuOpen = true },
-                        onDisclosure = (row as? BufferRow.Network)?.let { n ->
+                        onLongClick = if (row is BufferRow.AudioRoom || row is BufferRow.AudioPerson || row == BufferRow.Audio) null else ({ menuOpen = true }),
+                        onDisclosure = if (row is BufferRow.AudioRoom) ({
+                            expandedVoice = if (row.room.id in expandedVoice) expandedVoice - row.room.id else expandedVoice + row.room.id
+                        }) else (row as? BufferRow.Network)?.let { n ->
                             clients.getOrNull(n.client)?.takeIf { it.settings.networkId.isNotEmpty() }?.let { cl ->
                                 { controller.toggleCollapsed(cl) }
                             }
@@ -296,7 +325,7 @@ private data class RowContent(
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun BufferCell(content: RowContent, onClick: (() -> Unit)?, onLongClick: () -> Unit, onDisclosure: (() -> Unit)?) {
+private fun BufferCell(content: RowContent, onClick: (() -> Unit)?, onLongClick: (() -> Unit)?, onDisclosure: (() -> Unit)?) {
     val c = LocalFiberIrcColors.current
     val textColor = content.textColor ?: c.bufferText
     val foreground = if (content.selected) Color.White else textColor
@@ -513,7 +542,7 @@ private fun globalActions(controller: ShellController, stores: AccountStores, cl
         is BufferRow.Archived -> clients.getOrNull(row.client)
         is BufferRow.ArchivesHeader -> clients.getOrNull(row.client)
         is BufferRow.JoinChannel -> clients.getOrNull(row.client)
-        BufferRow.PinnedHeader, BufferRow.AddNetwork -> null
+        BufferRow.PinnedHeader, BufferRow.AddNetwork, BufferRow.Audio, is BufferRow.AudioRoom, is BufferRow.AudioPerson -> null
     }
     val actions = arrayListOf(
         RowAction("Mark All as Read") { controller.markAllChannelsRead() },

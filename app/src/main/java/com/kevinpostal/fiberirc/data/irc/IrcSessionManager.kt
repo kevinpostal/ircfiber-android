@@ -151,6 +151,20 @@ class IrcSessionManager(
         e2ee?.start()
     }
 
+    var connectionsPaused = false
+        private set
+    /** IRC service loss is not account loss: retain buffers and independent voice ownership. */
+    fun pauseConnections() {
+        if (tornDown) return
+        connectionsPaused = true
+        _clients.value.forEach { it.disconnect() }
+    }
+    fun resumeConnections() {
+        if (tornDown || !connectionsPaused) return
+        connectionsPaused = false
+        _clients.value.forEach { it.connect() }
+    }
+
     /** Leaving for the sign-in screen: stops observing, disconnects every client and stops encryption. Terminal. */
     fun stop() {
         if (tornDown) return
@@ -274,9 +288,9 @@ class IrcSessionManager(
     override fun onLinesChanged(client: IrcClient, buffer: IrcBuffer) = forward { it.onLinesChanged(client, buffer) }
 
     /**
-     * Bouncer/ircd refused the password (token rotated from the web, or the account was deleted). The login screen
-     * re-probes the site session: a live one reconnects with a freshly fetched bouncer token, a dead one shows the
-     * sign-in form with the notice. A second rejection within a minute signs out instead of bouncing.
+     * IRC credentials can rotate while the website login and voice remain healthy. The account owner
+     * refreshes IRC alone after confirming website identity. Repeated IRC rejection pauses recovery;
+     * only an actually expired website session returns to sign-in.
      */
     override fun onCredentialsRejected(client: IrcClient) {
         forward { it.onCredentialsRejected(client) }
@@ -284,17 +298,24 @@ class IrcSessionManager(
         val now = clock()
         val repeated = lastCredentialRecovery?.let { Duration.between(it, now) < REPEAT_WINDOW } ?: false
         lastCredentialRecovery = now
-        leaveForLogin("Your sign-in is no longer valid — sign in again.", logout = repeated)
+        scope.launch {
+            // IRC credential rotation is not website logout: recover IRC independently of voice.
+            val me = api.me()
+            if (tornDown) return@launch
+            val account = me.getOrNull()
+            if (account != null) {
+                if (!repeated) leaveForLogin("Refreshing IRC credentials…")
+            } else if (me.exceptionOrNull() is com.kevinpostal.fiberirc.data.api.SiteApiError.Unauthorized) {
+                leaveForLogin("Your sign-in is no longer valid — sign in again.")
+            }
+        }
     }
 
-    /** Once per session: to the login screen, which re-probes the site session (a live one reconnects). */
-    private fun leaveForLogin(notice: String, logout: Boolean = false) {
+    /** Request account-owner recovery once; it decides between IRC-only refresh and actual account loss. */
+    private fun leaveForLogin(notice: String) {
         if (leavingForLogin || tornDown) return
         leavingForLogin = true
-        scope.launch {
-            if (logout) api.logout()
-            showLogin(notice)
-        }
+        showLogin(notice)
     }
 
     // endregion

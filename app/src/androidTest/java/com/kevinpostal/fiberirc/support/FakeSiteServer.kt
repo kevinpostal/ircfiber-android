@@ -61,7 +61,7 @@ class FakeSiteServer(private val context: Context) {
      */
     fun siteApi(deviceId: () -> String = { "test-device" }, cookiePrefs: String = "test_cookies_${System.nanoTime()}"): SiteApi {
         val cookieJar = CookieJarStore(context.getSharedPreferences(cookiePrefs, Context.MODE_PRIVATE))
-        val client = fiberIrcHttpClient(cookieJar, deviceId)
+        val client = fiberIrcHttpClient(cookieJar, baseUrl, deviceId)
         return SiteApi(client, baseUrl)
     }
 

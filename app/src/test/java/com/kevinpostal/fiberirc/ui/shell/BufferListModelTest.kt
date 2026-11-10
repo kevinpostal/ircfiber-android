@@ -27,6 +27,9 @@ class BufferListModelTest {
     /** Rows as short strings: "pinned", "pin #a", "net 0", "#a", "archives 0 +"/"-", "arch #a", "join 0", "add". */
     private fun describe(rows: List<BufferRow>): List<String> = rows.map { row ->
         when (row) {
+            BufferRow.Audio -> "audio"
+            is BufferRow.AudioRoom -> "audio room ${row.room.id}"
+            is BufferRow.AudioPerson -> "audio participant ${row.participant.accountId}"
             BufferRow.PinnedHeader -> "pinned"
             is BufferRow.Pinned -> "pin ${row.buffer.name}"
             is BufferRow.Network -> "net ${row.client}"

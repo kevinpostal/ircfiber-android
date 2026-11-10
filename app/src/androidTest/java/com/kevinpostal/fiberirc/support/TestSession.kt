@@ -20,6 +20,8 @@ class TestSession(
     server: FakeSiteServer,
     settings: List<ConnectionSettings>,
     me: Me = Me(id = "u1", username = settings.firstOrNull()?.nick ?: "tester"),
+    /** Existing offline IRC fixtures deliberately cannot start authenticated media. */
+    voiceAccount: Me? = null,
 ) {
     val deps = Deps(app, apiBaseUrl = server.baseUrl)
     private val fakeSession = FakeSession(settings, deps.api)
@@ -47,6 +49,7 @@ class TestSession(
 
     init {
         deps.accountStores.loadAtLogin(me)
+        deps.voice.bind(voiceAccount?.id)
         manager.start()
     }
 }

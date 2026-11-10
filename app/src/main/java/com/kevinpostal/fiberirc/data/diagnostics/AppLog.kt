@@ -1,6 +1,7 @@
 package com.kevinpostal.fiberirc.data.diagnostics
 
 import java.time.Instant
+import com.kevinpostal.fiberirc.data.voice.VoicePrivacy
 
 /**
  * The app's log sink (ports `Log.swift` + the `OSLogStore` read in `Diagnostics.readLog`): forwards to
@@ -39,9 +40,10 @@ object AppLog {
 
     /** Like `android.util.Log.println`; also records the line when [tag] is the app's. */
     fun println(priority: Int, tag: String, msg: String): Int {
-        record(Instant.now(), priority, tag, msg)
+        val safe = VoicePrivacy.redact(msg)
+        record(Instant.now(), priority, tag, safe)
         return try {
-            android.util.Log.println(priority, tag, msg)
+            android.util.Log.println(priority, tag, safe)
         } catch (_: RuntimeException) {
             0 // JVM unit tests: android.util.Log is a stub
         }
@@ -52,7 +54,7 @@ object AppLog {
 
     internal fun record(time: Instant, priority: Int, tag: String, msg: String) {
         if (!tag.startsWith(TAG_PREFIX)) return
-        val line = "$time [${levelName(priority)}] $tag: $msg"
+        val line = "$time [${levelName(priority)}] $tag: ${VoicePrivacy.redact(msg)}"
         synchronized(ring) {
             if (ring.size == CAPACITY) ring.removeFirst()
             ring.addLast(line)

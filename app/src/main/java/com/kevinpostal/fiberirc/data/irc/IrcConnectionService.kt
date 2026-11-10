@@ -83,7 +83,7 @@ class IrcConnectionService : Service() {
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         // An explicitly stopped service must not leave a hidden session reconnecting in a cached process.
         if (owned != null && (deps.session.value as? IrcSessionState.Session)?.manager === owned) {
-            deps.stopConnections("Connections stopped — sign in to reconnect.")
+            deps.stopConnections("IRC connections paused — reopen the app to reconnect. Voice ownership is independent.")
         }
         super.onDestroy()
     }

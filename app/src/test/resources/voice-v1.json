@@ -1,0 +1,986 @@
+{
+  "version": 1,
+  "source": "site/backend/tests/fixtures/voice-v1.json",
+  "snapshots": [
+    {
+      "name": "member-private-hidden",
+      "value": {
+        "version": 1,
+        "enabled": true,
+        "available": true,
+        "canManage": false,
+        "revision": "9007199254740993",
+        "limits": {
+          "maxRoomCapacity": 12,
+          "maxParticipants": 24
+        },
+        "defaultRoomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+        "rooms": [
+          {
+            "id": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+            "slug": "lobby",
+            "name": "Lobby",
+            "description": "Community voice",
+            "visibility": "public",
+            "joinPolicy": "members",
+            "speakPolicy": "members",
+            "capacity": 12,
+            "revision": "9007199254740993",
+            "closed": false,
+            "isDefault": true,
+            "canJoin": true,
+            "canSpeak": true,
+            "canModerate": false,
+            "canManage": false,
+            "participantCount": 1,
+            "participants": [
+              {
+                "accountId": "563ac249-509a-4e06-a8c1-a6631fbe341c",
+                "sessionId": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+                "username": "fixture-member",
+                "avatarUrl": null,
+                "role": "member",
+                "muted": true,
+                "deafened": false,
+                "serverMuted": false
+              }
+            ]
+          },
+          {
+            "id": "998fe362-5972-4214-a749-3e1eeb24da04",
+            "slug": "restricted",
+            "name": "Restricted",
+            "description": "Community voice",
+            "visibility": "public",
+            "joinPolicy": "restricted",
+            "speakPolicy": "members",
+            "capacity": 12,
+            "revision": "9007199254740993",
+            "closed": false,
+            "isDefault": false,
+            "canJoin": false,
+            "canSpeak": false,
+            "canModerate": false,
+            "canManage": false,
+            "participantCount": null,
+            "participants": null
+          }
+        ],
+        "session": {
+          "id": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+          "roomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+          "status": "connected",
+          "muted": true,
+          "deafened": false,
+          "serverMuted": false,
+          "canSpeak": true,
+          "controlRevision": 0,
+          "ownedByThisClient": true
+        }
+      },
+      "hiddenRoomIds": [
+        "09896c3c-c5e4-4d42-8f55-d3b2873194e9"
+      ]
+    },
+    {
+      "name": "same-account-owner",
+      "value": {
+        "version": 1,
+        "enabled": true,
+        "available": true,
+        "canManage": false,
+        "revision": "9007199254740993",
+        "limits": {
+          "maxRoomCapacity": 12,
+          "maxParticipants": 24
+        },
+        "defaultRoomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+        "rooms": [
+          {
+            "id": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+            "slug": "lobby",
+            "name": "Lobby",
+            "description": "Community voice",
+            "visibility": "public",
+            "joinPolicy": "members",
+            "speakPolicy": "members",
+            "capacity": 12,
+            "revision": "9007199254740993",
+            "closed": false,
+            "isDefault": true,
+            "canJoin": true,
+            "canSpeak": true,
+            "canModerate": false,
+            "canManage": false,
+            "participantCount": 1,
+            "participants": [
+              {
+                "accountId": "563ac249-509a-4e06-a8c1-a6631fbe341c",
+                "sessionId": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+                "username": "fixture-member",
+                "avatarUrl": null,
+                "role": "member",
+                "muted": true,
+                "deafened": false,
+                "serverMuted": false
+              }
+            ]
+          }
+        ],
+        "session": {
+          "id": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+          "roomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+          "status": "connected",
+          "muted": true,
+          "deafened": false,
+          "serverMuted": false,
+          "canSpeak": true,
+          "controlRevision": 0,
+          "ownedByThisClient": true
+        }
+      }
+    },
+    {
+      "name": "same-account-other-instance",
+      "value": {
+        "version": 1,
+        "enabled": true,
+        "available": true,
+        "canManage": false,
+        "revision": "9007199254740993",
+        "limits": {
+          "maxRoomCapacity": 12,
+          "maxParticipants": 24
+        },
+        "defaultRoomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+        "rooms": [
+          {
+            "id": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+            "slug": "lobby",
+            "name": "Lobby",
+            "description": "Community voice",
+            "visibility": "public",
+            "joinPolicy": "members",
+            "speakPolicy": "members",
+            "capacity": 12,
+            "revision": "9007199254740993",
+            "closed": false,
+            "isDefault": true,
+            "canJoin": true,
+            "canSpeak": true,
+            "canModerate": false,
+            "canManage": false,
+            "participantCount": 1,
+            "participants": [
+              {
+                "accountId": "563ac249-509a-4e06-a8c1-a6631fbe341c",
+                "sessionId": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+                "username": "fixture-member",
+                "avatarUrl": null,
+                "role": "member",
+                "muted": true,
+                "deafened": false,
+                "serverMuted": false
+              }
+            ]
+          }
+        ],
+        "session": {
+          "id": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+          "roomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+          "status": "connected",
+          "muted": true,
+          "deafened": false,
+          "serverMuted": false,
+          "canSpeak": true,
+          "controlRevision": 7,
+          "ownedByThisClient": false
+        }
+      }
+    },
+    {
+      "name": "private-authorized",
+      "value": {
+        "version": 1,
+        "enabled": true,
+        "available": true,
+        "canManage": false,
+        "revision": "9007199254740993",
+        "limits": {
+          "maxRoomCapacity": 12,
+          "maxParticipants": 24
+        },
+        "defaultRoomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+        "rooms": [
+          {
+            "id": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+            "slug": "lobby",
+            "name": "Lobby",
+            "description": "Community voice",
+            "visibility": "public",
+            "joinPolicy": "members",
+            "speakPolicy": "members",
+            "capacity": 12,
+            "revision": "9007199254740993",
+            "closed": false,
+            "isDefault": true,
+            "canJoin": true,
+            "canSpeak": true,
+            "canModerate": false,
+            "canManage": false,
+            "participantCount": 1,
+            "participants": [
+              {
+                "accountId": "563ac249-509a-4e06-a8c1-a6631fbe341c",
+                "sessionId": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+                "username": "fixture-member",
+                "avatarUrl": null,
+                "role": "member",
+                "muted": true,
+                "deafened": false,
+                "serverMuted": false
+              }
+            ]
+          },
+          {
+            "id": "09896c3c-c5e4-4d42-8f55-d3b2873194e9",
+            "slug": "private",
+            "name": "Private",
+            "description": "Community voice",
+            "visibility": "private",
+            "joinPolicy": "restricted",
+            "speakPolicy": "members",
+            "capacity": 12,
+            "revision": "9007199254740993",
+            "closed": false,
+            "isDefault": false,
+            "canJoin": true,
+            "canSpeak": true,
+            "canModerate": false,
+            "canManage": false,
+            "participantCount": 0,
+            "participants": []
+          }
+        ],
+        "session": {
+          "id": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+          "roomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+          "status": "connected",
+          "muted": true,
+          "deafened": false,
+          "serverMuted": false,
+          "canSpeak": true,
+          "controlRevision": 0,
+          "ownedByThisClient": true
+        }
+      }
+    },
+    {
+      "name": "unavailable-preserves-unknown",
+      "value": {
+        "version": 1,
+        "enabled": true,
+        "available": false,
+        "canManage": false,
+        "revision": "9007199254740993",
+        "limits": {
+          "maxRoomCapacity": 12,
+          "maxParticipants": 24
+        },
+        "defaultRoomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+        "rooms": [
+          {
+            "id": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+            "slug": "lobby",
+            "name": "Lobby",
+            "description": "Community voice",
+            "visibility": "public",
+            "joinPolicy": "members",
+            "speakPolicy": "members",
+            "capacity": 12,
+            "revision": "9007199254740993",
+            "closed": false,
+            "isDefault": true,
+            "canJoin": true,
+            "canSpeak": true,
+            "canModerate": false,
+            "canManage": false,
+            "participantCount": null,
+            "participants": null
+          }
+        ],
+        "session": null
+      }
+    },
+    {
+      "name": "disabled-member",
+      "value": {
+        "version": 1,
+        "enabled": false,
+        "available": true,
+        "canManage": false,
+        "revision": "9007199254740993",
+        "limits": {
+          "maxRoomCapacity": 12,
+          "maxParticipants": 24
+        },
+        "defaultRoomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+        "rooms": [],
+        "session": null
+      }
+    },
+    {
+      "name": "disabled-admin",
+      "value": {
+        "version": 1,
+        "enabled": false,
+        "available": true,
+        "canManage": true,
+        "revision": "9007199254740993",
+        "limits": {
+          "maxRoomCapacity": 12,
+          "maxParticipants": 24
+        },
+        "defaultRoomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+        "rooms": [],
+        "session": null
+      }
+    }
+  ],
+  "sessions": [
+    {
+      "name": "joining",
+      "value": {
+        "id": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+        "roomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+        "status": "joining",
+        "muted": true,
+        "deafened": false,
+        "serverMuted": false,
+        "canSpeak": true,
+        "controlRevision": 0,
+        "ownedByThisClient": true
+      }
+    },
+    {
+      "name": "connected",
+      "value": {
+        "id": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+        "roomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+        "status": "connected",
+        "muted": true,
+        "deafened": false,
+        "serverMuted": false,
+        "canSpeak": true,
+        "controlRevision": 1,
+        "ownedByThisClient": true
+      }
+    },
+    {
+      "name": "reconnecting",
+      "value": {
+        "id": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+        "roomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+        "status": "reconnecting",
+        "muted": true,
+        "deafened": false,
+        "serverMuted": false,
+        "canSpeak": true,
+        "controlRevision": 2,
+        "ownedByThisClient": true
+      }
+    },
+    {
+      "name": "revoking",
+      "value": {
+        "id": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+        "roomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+        "status": "revoking",
+        "muted": true,
+        "deafened": false,
+        "serverMuted": false,
+        "canSpeak": true,
+        "controlRevision": 3,
+        "ownedByThisClient": true,
+        "reason": "voice_banned"
+      }
+    }
+  ],
+  "operations": [
+    {
+      "name": "pending",
+      "value": {
+        "status": "pending"
+      }
+    },
+    {
+      "name": "complete-without-credentials",
+      "value": {
+        "status": "complete"
+      }
+    }
+  ],
+  "errors": [
+    {
+      "name": "full",
+      "status": 409,
+      "body": {
+        "error": "Room is full",
+        "code": "voice_room_full",
+        "params": {
+          "roomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+          "capacity": 12
+        }
+      }
+    },
+    {
+      "name": "unavailable",
+      "status": 503,
+      "body": {
+        "error": "Voice is unavailable",
+        "code": "voice_unavailable",
+        "params": null
+      }
+    },
+    {
+      "name": "rate-limit",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "code": "voice_rate_limited",
+        "params": {
+          "retryAfterSeconds": 2
+        }
+      }
+    },
+    {
+      "name": "active-elsewhere",
+      "status": 409,
+      "body": {
+        "error": "Voice is active elsewhere",
+        "code": "voice_active_elsewhere",
+        "params": {
+          "session": {
+            "id": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+            "roomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+            "status": "connected",
+            "muted": true,
+            "deafened": false,
+            "serverMuted": false,
+            "canSpeak": true,
+            "controlRevision": 7,
+            "ownedByThisClient": false
+          }
+        }
+      }
+    },
+    {
+      "name": "impersonation",
+      "status": 403,
+      "body": {
+        "error": "Impersonation cannot use voice",
+        "code": "voice_impersonation_forbidden",
+        "params": {}
+      }
+    },
+    {
+      "name": "conflict",
+      "status": 409,
+      "body": {
+        "error": "State has changed",
+        "code": "voice_conflict",
+        "params": {
+          "revision": "9007199254740994"
+        }
+      }
+    },
+    { "name": "disabled", "status": 403, "body": { "error": "Voice is disabled", "code": "voice_disabled", "params": null } },
+    { "name": "forbidden", "status": 403, "body": { "error": "Access denied", "code": "voice_forbidden", "params": null } },
+    { "name": "room-closed", "status": 409, "body": { "error": "Room is closed", "code": "voice_room_closed", "params": {} } },
+    { "name": "capacity-in-use", "status": 409, "body": { "error": "Capacity is in use", "code": "voice_capacity_in_use", "params": { "occupied": 2, "reserved": 1 } } },
+    { "name": "session-ended", "status": 409, "body": { "error": "Session has ended", "code": "voice_session_ended", "params": null } },
+    { "name": "invalid-control", "status": 400, "body": { "error": "Deafen requires mute", "code": "voice_invalid_control", "params": {} } }
+  ],
+  "events": [
+    {
+      "name": "directory",
+      "value": {
+        "type": "voice_directory_changed",
+        "revision": "9007199254740994"
+      }
+    },
+    {
+      "name": "non-owner-session",
+      "value": {
+        "type": "voice_session",
+        "sessionId": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+        "controlRevision": 8,
+        "reason": "voice_removed"
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "numeric-directory-revision",
+      "kind": "snapshot",
+      "value": {
+        "version": 1,
+        "enabled": true,
+        "available": true,
+        "canManage": false,
+        "revision": 9,
+        "limits": {
+          "maxRoomCapacity": 12,
+          "maxParticipants": 24
+        },
+        "defaultRoomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+        "rooms": [
+          {
+            "id": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+            "slug": "lobby",
+            "name": "Lobby",
+            "description": "Community voice",
+            "visibility": "public",
+            "joinPolicy": "members",
+            "speakPolicy": "members",
+            "capacity": 12,
+            "revision": "9007199254740993",
+            "closed": false,
+            "isDefault": true,
+            "canJoin": true,
+            "canSpeak": true,
+            "canModerate": false,
+            "canManage": false,
+            "participantCount": 1,
+            "participants": [
+              {
+                "accountId": "563ac249-509a-4e06-a8c1-a6631fbe341c",
+                "sessionId": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+                "username": "fixture-member",
+                "avatarUrl": null,
+                "role": "member",
+                "muted": true,
+                "deafened": false,
+                "serverMuted": false
+              }
+            ]
+          }
+        ],
+        "session": {
+          "id": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+          "roomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+          "status": "joining",
+          "muted": true,
+          "deafened": false,
+          "serverMuted": false,
+          "canSpeak": true,
+          "controlRevision": 0,
+          "ownedByThisClient": true
+        }
+      },
+      "why": "Revisions must remain lossless decimal strings"
+    },
+    {
+      "name": "numeric-room-revision",
+      "kind": "snapshot",
+      "value": {
+        "version": 1,
+        "enabled": true,
+        "available": true,
+        "canManage": false,
+        "revision": "9007199254740993",
+        "limits": {
+          "maxRoomCapacity": 12,
+          "maxParticipants": 24
+        },
+        "defaultRoomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+        "rooms": [
+          {
+            "id": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+            "slug": "lobby",
+            "name": "Lobby",
+            "description": "Community voice",
+            "visibility": "public",
+            "joinPolicy": "members",
+            "speakPolicy": "members",
+            "capacity": 12,
+            "revision": 2,
+            "closed": false,
+            "isDefault": true,
+            "canJoin": true,
+            "canSpeak": true,
+            "canModerate": false,
+            "canManage": false,
+            "participantCount": 1,
+            "participants": [
+              {
+                "accountId": "563ac249-509a-4e06-a8c1-a6631fbe341c",
+                "sessionId": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+                "username": "fixture-member",
+                "avatarUrl": null,
+                "role": "member",
+                "muted": true,
+                "deafened": false,
+                "serverMuted": false
+              }
+            ]
+          }
+        ],
+        "session": {
+          "id": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+          "roomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+          "status": "joining",
+          "muted": true,
+          "deafened": false,
+          "serverMuted": false,
+          "canSpeak": true,
+          "controlRevision": 0,
+          "ownedByThisClient": true
+        }
+      },
+      "why": "Room revisions are strings"
+    },
+    {
+      "name": "string-control-revision",
+      "kind": "session",
+      "value": {
+        "id": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+        "roomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+        "status": "joining",
+        "muted": true,
+        "deafened": false,
+        "serverMuted": false,
+        "canSpeak": true,
+        "controlRevision": "1",
+        "ownedByThisClient": true
+      },
+      "why": "Control revisions are JSON integers"
+    },
+    {
+      "name": "unknown-session-state",
+      "kind": "session",
+      "value": {
+        "id": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+        "roomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+        "status": "ready",
+        "muted": true,
+        "deafened": false,
+        "serverMuted": false,
+        "canSpeak": true,
+        "controlRevision": 0,
+        "ownedByThisClient": true
+      },
+      "why": "Ready is an operation state, not a session state"
+    },
+    {
+      "name": "deafened-transmitting",
+      "kind": "session",
+      "value": {
+        "id": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+        "roomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+        "status": "joining",
+        "muted": false,
+        "deafened": true,
+        "serverMuted": false,
+        "canSpeak": true,
+        "controlRevision": 0,
+        "ownedByThisClient": true
+      },
+      "why": "Deafen always mutes"
+    },
+    {
+      "name": "session-secret",
+      "kind": "session",
+      "value": {
+        "id": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+        "roomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+        "status": "connected",
+        "muted": true,
+        "deafened": false,
+        "serverMuted": false,
+        "canSpeak": true,
+        "controlRevision": 7,
+        "ownedByThisClient": false,
+        "clientInstanceId": "not-a-wire-field"
+      },
+      "why": "Session projection never exposes instance identifiers"
+    },
+    {
+      "name": "locked-roster-leak",
+      "kind": "snapshot",
+      "value": {
+        "version": 1,
+        "enabled": true,
+        "available": true,
+        "canManage": false,
+        "revision": "9007199254740993",
+        "limits": {
+          "maxRoomCapacity": 12,
+          "maxParticipants": 24
+        },
+        "defaultRoomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+        "rooms": [
+          {
+            "id": "998fe362-5972-4214-a749-3e1eeb24da04",
+            "slug": "restricted",
+            "name": "Restricted",
+            "description": "Community voice",
+            "visibility": "public",
+            "joinPolicy": "restricted",
+            "speakPolicy": "members",
+            "capacity": 12,
+            "revision": "9007199254740993",
+            "closed": false,
+            "isDefault": false,
+            "canJoin": false,
+            "canSpeak": false,
+            "canModerate": false,
+            "canManage": false,
+            "participantCount": 1,
+            "participants": [
+              {
+                "accountId": "563ac249-509a-4e06-a8c1-a6631fbe341c",
+                "sessionId": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+                "username": "fixture-member",
+                "avatarUrl": null,
+                "role": "member",
+                "muted": true,
+                "deafened": false,
+                "serverMuted": false
+              }
+            ]
+          }
+        ],
+        "session": {
+          "id": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+          "roomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+          "status": "joining",
+          "muted": true,
+          "deafened": false,
+          "serverMuted": false,
+          "canSpeak": true,
+          "controlRevision": 0,
+          "ownedByThisClient": true
+        }
+      },
+      "why": "Denied public rooms have null roster and count"
+    },
+    {
+      "name": "roster-count-mismatch",
+      "kind": "snapshot",
+      "value": {
+        "version": 1,
+        "enabled": true,
+        "available": true,
+        "canManage": false,
+        "revision": "9007199254740993",
+        "limits": {
+          "maxRoomCapacity": 12,
+          "maxParticipants": 24
+        },
+        "defaultRoomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+        "rooms": [
+          {
+            "id": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+            "slug": "lobby",
+            "name": "Lobby",
+            "description": "Community voice",
+            "visibility": "public",
+            "joinPolicy": "members",
+            "speakPolicy": "members",
+            "capacity": 12,
+            "revision": "9007199254740993",
+            "closed": false,
+            "isDefault": true,
+            "canJoin": true,
+            "canSpeak": true,
+            "canModerate": false,
+            "canManage": false,
+            "participantCount": 0,
+            "participants": [
+              {
+                "accountId": "563ac249-509a-4e06-a8c1-a6631fbe341c",
+                "sessionId": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+                "username": "fixture-member",
+                "avatarUrl": null,
+                "role": "member",
+                "muted": true,
+                "deafened": false,
+                "serverMuted": false
+              }
+            ]
+          }
+        ],
+        "session": {
+          "id": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+          "roomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+          "status": "joining",
+          "muted": true,
+          "deafened": false,
+          "serverMuted": false,
+          "canSpeak": true,
+          "controlRevision": 0,
+          "ownedByThisClient": true
+        }
+      },
+      "why": "Known counts agree with authorized rosters"
+    },
+    {
+      "name": "missing-unknown-roster",
+      "kind": "snapshot",
+      "value": {
+        "version": 1,
+        "enabled": true,
+        "available": true,
+        "canManage": false,
+        "revision": "9007199254740993",
+        "limits": {
+          "maxRoomCapacity": 12,
+          "maxParticipants": 24
+        },
+        "defaultRoomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+        "rooms": [
+          {
+            "id": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+            "slug": "lobby",
+            "name": "Lobby",
+            "description": "Community voice",
+            "visibility": "public",
+            "joinPolicy": "members",
+            "speakPolicy": "members",
+            "capacity": 12,
+            "revision": "9007199254740993",
+            "closed": false,
+            "isDefault": true,
+            "canJoin": true,
+            "canSpeak": true,
+            "canModerate": false,
+            "canManage": false,
+            "participantCount": 1
+          }
+        ],
+        "session": {
+          "id": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+          "roomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+          "status": "joining",
+          "muted": true,
+          "deafened": false,
+          "serverMuted": false,
+          "canSpeak": true,
+          "controlRevision": 0,
+          "ownedByThisClient": true
+        }
+      },
+      "why": "Missing roster is not explicit unknown null"
+    },
+    {
+      "name": "disabled-data-leak",
+      "kind": "snapshot",
+      "value": {
+        "version": 1,
+        "enabled": false,
+        "available": true,
+        "canManage": false,
+        "revision": "9007199254740993",
+        "limits": {
+          "maxRoomCapacity": 12,
+          "maxParticipants": 24
+        },
+        "defaultRoomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+        "rooms": [
+          {
+            "id": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+            "slug": "lobby",
+            "name": "Lobby",
+            "description": "Community voice",
+            "visibility": "public",
+            "joinPolicy": "members",
+            "speakPolicy": "members",
+            "capacity": 12,
+            "revision": "9007199254740993",
+            "closed": false,
+            "isDefault": true,
+            "canJoin": true,
+            "canSpeak": true,
+            "canModerate": false,
+            "canManage": false,
+            "participantCount": 1,
+            "participants": [
+              {
+                "accountId": "563ac249-509a-4e06-a8c1-a6631fbe341c",
+                "sessionId": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+                "username": "fixture-member",
+                "avatarUrl": null,
+                "role": "member",
+                "muted": true,
+                "deafened": false,
+                "serverMuted": false
+              }
+            ]
+          }
+        ],
+        "session": {
+          "id": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+          "roomId": "7ccbd9ed-aec0-4d4b-a1d9-a504843cc603",
+          "status": "joining",
+          "muted": true,
+          "deafened": false,
+          "serverMuted": false,
+          "canSpeak": true,
+          "controlRevision": 0,
+          "ownedByThisClient": true
+        }
+      },
+      "why": "Disabled ordinary accounts get no room or session data"
+    },
+    {
+      "name": "pending-credentials",
+      "kind": "operation",
+      "value": {
+        "status": "pending",
+        "join": {}
+      },
+      "why": "Pending operations cannot deliver credentials"
+    },
+    {
+      "name": "operation-unknown-state",
+      "kind": "operation",
+      "value": {
+        "status": "ready"
+      },
+      "why": "Polling returns only pending or complete"
+    },
+    {
+      "name": "event-owner-projection",
+      "kind": "event",
+      "value": {
+        "type": "voice_session",
+        "sessionId": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+        "controlRevision": 1,
+        "ownedByThisClient": true
+      },
+      "why": "Broadcasts cannot contain instance-specific owner state"
+    },
+    {
+      "name": "event-string-control",
+      "kind": "event",
+      "value": {
+        "type": "voice_session",
+        "sessionId": "a3a77c29-6767-4e37-843f-857fe4c46dcf",
+        "controlRevision": "1"
+      },
+      "why": "Session events use numeric control revisions"
+    },
+    {
+      "name": "error-wrong-code-type",
+      "kind": "error",
+      "value": {
+        "error": "Failed",
+        "code": 1,
+        "params": {}
+      },
+      "why": "Error code must be a stable string",
+      "status": 409
+    }
+  ]
+}

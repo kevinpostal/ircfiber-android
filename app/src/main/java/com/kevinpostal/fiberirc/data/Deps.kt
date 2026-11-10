@@ -31,7 +31,9 @@ import com.kevinpostal.fiberirc.data.push.ConversationShortcuts
 import com.kevinpostal.fiberirc.data.push.PushRegistrar
 import com.kevinpostal.fiberirc.data.update.AppUpdates
 import com.kevinpostal.fiberirc.data.update.PlayUpdateFlow
+import com.kevinpostal.fiberirc.data.voice.VoiceRoomOwner
 import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -49,11 +51,16 @@ import okhttp3.OkHttpClient
  * the cached-app freezer meanwhile. A cold start begins at sign-in; nothing here signs in by itself.
  */
 class Deps(private val app: Application, val apiBaseUrl: String = BuildConfig.API_BASE_URL) {
+    private val sessionScope = MainScope()
     val deviceIdentity = DeviceIdentity(app)
     val cookieJar = CookieJarStore(app)
-    val httpClient: OkHttpClient = fiberIrcHttpClient(cookieJar) { deviceIdentity.id }
+    val httpClient: OkHttpClient = fiberIrcHttpClient(cookieJar, apiBaseUrl) { deviceIdentity.id }
     val api = SiteApi(httpClient, apiBaseUrl)
     val media = MediaApi(httpClient, api)
+    val voice = VoiceRoomOwner(app, api, httpClient, apiBaseUrl, { deviceIdentity.id })
+    init { api.beforeCredentialLoss = {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main.immediate) { voice.stopBeforeCredentialLoss() }
+    } }
 
     val accountSettings = AccountSettingsStore(app, api)
     val deviceSettings = DeviceSettingsStore(app)
@@ -102,20 +109,21 @@ class Deps(private val app: Application, val apiBaseUrl: String = BuildConfig.AP
      * never start and sign-in shows why.
      */
     @MainThread
-    fun startSession(settings: List<ConnectionSettings>) {
+    fun startSession(start: SessionStart) {
         if ((_session.value as? IrcSessionState.Session)?.manager?.isTornDown == false) return
         lateinit var manager: IrcSessionManager
         // Only the current session may leave for sign-in; a replaced one's late callback is ignored.
         val leave: (String) -> Unit = { notice ->
-            if ((_session.value as? IrcSessionState.Session)?.manager === manager) showLogin(notice)
+            if ((_session.value as? IrcSessionState.Session)?.manager === manager) recoverIrc(manager, notice)
         }
-        manager = IrcSessionManager(app, settings, api, { deviceIdentity.id }, leave) { m ->
+        manager = IrcSessionManager(app, start.connections, api, { deviceIdentity.id }, leave) { m ->
             E2eeService(
                 app, api, httpClient, { deviceIdentity.id }, m, bufferPrefs,
                 passkeys = passkeys.takeIf { it.supported },
             )
         }
-        _session.value = IrcSessionState.Session(manager)
+        voice.bind(start.account?.id)
+        _session.value = IrcSessionState.Session(manager, start.account)
         try {
             IrcConnectionService.start(app)
         } catch (e: RuntimeException) {
@@ -134,11 +142,46 @@ class Deps(private val app: Application, val apiBaseUrl: String = BuildConfig.AP
     @MainThread
     fun showLogin(notice: String) = endSession(notice, resumeStoredSession = true)
 
-    /** A stopped/refused foreground service waits for explicit sign-in; it must not auto-reconnect in a loop. */
+    /** IRC service loss pauses text connections, not the authenticated account or independent audio. */
     @MainThread
-    fun stopConnections(notice: String) = endSession(notice, resumeStoredSession = false)
+    fun stopConnections(notice: String) {
+        // Losing IRC foreground ownership is not account loss and cannot end an ongoing voice call.
+        (_session.value as? IrcSessionState.Session)?.manager?.pauseConnections()
+        AppLog.w(TAG, notice)
+    }
+
+    /** Only a website 401/account mismatch ends voice; an IRC token rotation replaces IRC alone. */
+    private fun recoverIrc(manager: IrcSessionManager, notice: String) {
+        sessionScope.launch {
+            val old = _session.value as? IrcSessionState.Session ?: return@launch
+            if (old.manager !== manager) return@launch
+            val result = api.me()
+            if ((_session.value as? IrcSessionState.Session)?.manager !== manager) return@launch
+            val me = result.getOrNull()
+            if (me == null) {
+                if (result.exceptionOrNull() is com.kevinpostal.fiberirc.data.api.SiteApiError.Unauthorized) showLogin(notice)
+                return@launch
+            }
+            if (me.id != old.account?.id) { showLogin("Account changed — sign in again."); return@launch }
+            val bouncer = com.kevinpostal.fiberirc.data.api.SessionBootstrap.bouncerSettings(me, api, deviceIdentity.id).getOrNull() ?: return@launch
+            val settings = if (bouncer.isNotEmpty() || manager.clients.value.all { it.settings.viaBouncer }) bouncer
+                else listOf(ConnectionSettings.forAccount(me.username,
+                    com.kevinpostal.fiberirc.data.api.SessionBootstrap.ircAccountWaitingForReady(api, attempts = 1).getOrNull()))
+            if ((_session.value as? IrcSessionState.Session)?.manager !== manager) return@launch
+            manager.stop()
+            startSession(SessionStart(me, settings))
+        }
+    }
+
+    fun resumeIrcConnections() {
+        val manager = (_session.value as? IrcSessionState.Session)?.manager ?: return
+        if (!manager.connectionsPaused) return
+        try { IrcConnectionService.start(app); manager.resumeConnections() }
+        catch (e: RuntimeException) { AppLog.e(TAG, "IRC service restart refused", e) }
+    }
 
     private fun endSession(notice: String, resumeStoredSession: Boolean) {
+        voice.unbind()
         (_session.value as? IrcSessionState.Session)?.manager?.stop()
         _session.value = IrcSessionState.Login(notice.ifEmpty { null }, ++loginGeneration, resumeStoredSession)
     }

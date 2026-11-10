@@ -9,5 +9,5 @@ sealed interface IrcSessionState {
     /** [resumeStoredSession] is false after an explicit service stop or a refused foreground-service start. */
     data class Login(val notice: String?, val generation: Int, val resumeStoredSession: Boolean = true) : IrcSessionState
 
-    class Session(val manager: IrcSessionManager) : IrcSessionState
+    class Session(val manager: IrcSessionManager, val account: com.kevinpostal.fiberirc.data.api.Me?) : IrcSessionState
 }

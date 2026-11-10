@@ -1,5 +1,7 @@
 package com.kevinpostal.fiberirc.ui.login
 
+import com.kevinpostal.fiberirc.data.SessionStart
+
 import android.content.Context
 import android.content.SharedPreferences
 import android.net.Uri
@@ -101,9 +103,9 @@ class LoginViewModel(
     private val _state = MutableStateFlow(LoginUiState())
     val state: StateFlow<LoginUiState> = _state.asStateFlow()
 
-    private val _session = MutableStateFlow<List<ConnectionSettings>?>(null)
-    /** Set once signed in: the connections the session starts with. */
-    val session: StateFlow<List<ConnectionSettings>?> = _session.asStateFlow()
+    private val _session = MutableStateFlow<SessionStart?>(null)
+    /** One-shot authenticated account and IRC connections handoff. */
+    val session: StateFlow<SessionStart?> = _session.asStateFlow()
 
     private var guidelinesReply: CompletableDeferred<Boolean>? = null
 
@@ -695,7 +697,7 @@ class LoginViewModel(
             onSuccess = { settings ->
                 if (settings.isNotEmpty()) {
                     show("")
-                    _session.value = settings
+                    _session.value = SessionStart(me, settings)
                     return
                 }
             },
@@ -733,7 +735,7 @@ class LoginViewModel(
         } else {
             show("")
         }
-        _session.value = listOf(settings)
+        _session.value = SessionStart(me, listOf(settings))
     }
 
     /** True once the user has agreed (asked once per install); false when they cancel. */

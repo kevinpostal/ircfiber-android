@@ -72,6 +72,8 @@ class ShellNavigation(
     val conversationEncryption: (IrcClient, IrcBuffer) -> Unit,
     /** Settings → Encryption (devices, backup, linking, defaults, unlock). */
     val encryptionSettings: () -> Unit,
+    val voice: com.kevinpostal.fiberirc.data.voice.VoiceRoomOwner? = null,
+    val openAudio: (String?) -> Unit = {},
 )
 
 /** A small dialog the shell shows (`Prompts.swift`, confirmations, errors). */

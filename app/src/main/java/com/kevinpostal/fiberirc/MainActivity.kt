@@ -19,7 +19,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kevinpostal.fiberirc.data.Deps
-import com.kevinpostal.fiberirc.data.irc.ConnectionSettings
+import com.kevinpostal.fiberirc.data.SessionStart
 import com.kevinpostal.fiberirc.data.irc.IrcSessionState
 import com.kevinpostal.fiberirc.ui.login.LoginScreen
 import com.kevinpostal.fiberirc.ui.login.LoginViewModel
@@ -49,11 +49,13 @@ class MainActivity : ComponentActivity() {
         deps.playUpdateFlow.attach(this)
         // A recreated activity's launch intent was already handled.
         if (savedInstanceState == null) AppRouter.handle(intent)
+        if (intent.getBooleanExtra(com.kevinpostal.fiberirc.data.voice.VoiceConnectionService.OPEN_AUDIO, false)) deps.voice.openAudio()
         setContent { FiberIrcRoot(deps) }
     }
 
     override fun onResume() {
         super.onResume()
+        deps.resumeIrcConnections()
         lifecycleScope.launch { deps.appUpdates.onForeground() }
     }
 
@@ -62,6 +64,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         AppRouter.handle(intent)
+        if (intent.getBooleanExtra(com.kevinpostal.fiberirc.data.voice.VoiceConnectionService.OPEN_AUDIO, false)) deps.voice.openAudio()
     }
 }
 
@@ -94,7 +97,7 @@ private fun FiberIrcRoot(deps: Deps) {
  * `fiberirc://auth` hand-off of social sign-in, then hands the session's connections to [onSession].
  */
 @Composable
-private fun Login(deps: Deps, screen: IrcSessionState.Login, onSession: (List<ConnectionSettings>) -> Unit) {
+private fun Login(deps: Deps, screen: IrcSessionState.Login, onSession: (SessionStart) -> Unit) {
     val context = LocalContext.current
     val login: LoginViewModel = viewModel(
         key = "login-${screen.generation}",
@@ -109,5 +112,5 @@ private fun Login(deps: Deps, screen: IrcSessionState.Login, onSession: (List<Co
         login.handleAuthRedirect(Uri.parse(uri))
         AppRouter.consumeAuthRedirect(uri)
     }
-    LoginScreen(login, BuildConfig.API_BASE_URL, onSession = onSession)
+    LoginScreen(login, deps.apiBaseUrl, onSession = onSession)
 }

@@ -49,14 +49,14 @@ fun fiberIrcHeaderInterceptor(
 }
 
 /** The one client every ircfiber.com call (API, images, uploads) shares: no redirects followed, 20 s timeouts. */
-fun fiberIrcHttpClient(cookieJar: CookieJar, deviceId: () -> String): OkHttpClient = OkHttpClient.Builder()
+fun fiberIrcHttpClient(cookieJar: CookieJar, baseUrl: String = BuildConfig.API_BASE_URL, deviceId: () -> String): OkHttpClient = OkHttpClient.Builder()
     .followRedirects(false)
     .followSslRedirects(false)
     .connectTimeout(20, TimeUnit.SECONDS)
     .readTimeout(20, TimeUnit.SECONDS)
     .writeTimeout(20, TimeUnit.SECONDS)
     .cookieJar(cookieJar)
-    .addInterceptor(fiberIrcHeaderInterceptor(deviceId))
+    .addInterceptor(fiberIrcHeaderInterceptor(deviceId, baseUrl))
     .build()
 
 /** `<scheme>://<host>[:port]`, the port only when it isn't the scheme's default. */
